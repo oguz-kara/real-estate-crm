@@ -6,11 +6,10 @@ component stories. Each fixture has React and Preact stories built with
 Scenarios share their checks between runtimes where behavior matches. The story
 file contains the metadata and named entries; `utils/` holds the story factory,
 shared assertions, render checks, interaction checks, and known-failure
-scenarios. Shared types and error patterns live in `types/` and `constants/`.
+scenarios. Shared types and constants live in `types/` and `constants/`.
 `createGalleryRenderTest` checks the exact set of expected failed components.
 `createOverlayOpenTest` checks that a trigger opens its overlay and pins the
-popup content as absent from the page. `expectSandboxErrors` requires each
-listed known error and rejects any other error.
+popup content as absent from the page.
 
 | Fixture | Components |
 | --- | --- |
@@ -59,9 +58,11 @@ worker measurements are zero until the host snapshot arrives. The story waits
 for that snapshot and re-enters after enabling the tooltip; opening
 on the first hover remains a geometry limitation.
 
-Input and textarea selection state comes from host snapshots. Owned selection
-requests commit with controlled values, and detached controls discard their pending
-commands and subscriptions. NumberStepper stories verify exactly-once stepping,
+Input and textarea selection reads combine host snapshots with the component's
+own pending requests, which commit with controlled values. Moved controls keep
+their pending requests; controls still detached once the removing code finishes
+discard them and their subscriptions. Input types without text selection behave
+as in a browser. NumberStepper stories verify exactly-once stepping,
 selected-range replacement and continued mid-string editing in both runtimes.
 
 The Autocomplete fixture uses the public inline list interface to isolate input

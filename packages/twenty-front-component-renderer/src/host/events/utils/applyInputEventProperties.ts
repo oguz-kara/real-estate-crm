@@ -18,11 +18,14 @@ export const applyInputEventProperties = ({
   if (isBoolean(nativeEvent.isComposing)) {
     serialized.isComposing = nativeEvent.isComposing;
   }
-  if (isString(domEvent.inputType)) {
-    serialized.inputType = domEvent.inputType;
+  if (isString(nativeEvent.inputType)) {
+    serialized.inputType = nativeEvent.inputType;
   }
-  if (isString(domEvent.data)) {
-    serialized.data = domEvent.data.slice(0, MAX_SERIALIZED_EVENT_TEXT_LENGTH);
+  if (isString(nativeEvent.data)) {
+    serialized.data = nativeEvent.data.slice(
+      0,
+      MAX_SERIALIZED_EVENT_TEXT_LENGTH,
+    );
   }
 
   applyPasteClipboardText(serialized, domEvent);

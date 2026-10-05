@@ -6,7 +6,7 @@ import { useCaretPreservingElementRef } from '@/host/caret/hooks/useCaretPreserv
 import { useHtmlHostElementProps } from '@/host/elements/hooks/useHtmlHostElementProps';
 import { createCaretPreservingElement } from '@/host/caret/utils/createCaretPreservingElement';
 import { createPlainHostElement } from '@/host/elements/utils/createPlainHostElement';
-import { isTextLikeInputType } from '@/host/caret/utils/isTextLikeInputType';
+import { isTextLikeInputType } from '@/utils/isTextLikeInputType';
 
 const VOID_ELEMENTS = new Set([
   'area',
