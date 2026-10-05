@@ -2,10 +2,10 @@ import { type EnrichedObjectMetadataItem } from '@/object-metadata/types/Enriche
 import { getNonReadableFieldMetadataIdsFromObjectPermissions } from '@/object-metadata/utils/getNonReadableFieldMetadataIdsFromObjectPermissions';
 import { useObjectPermissions } from '@/object-record/hooks/useObjectPermissions';
 import { RecordGroupAggregateDropdownFieldsContent } from '@/object-record/record-group/components/RecordGroupAggregateDropdownFieldsContent';
-import { RecordGroupAggregateDropdownMenuContent } from '@/object-record/record-group/components/RecordGroupAggregateDropdownMenuContent';
 import { RecordGroupAggregateDropdownOptionsContent } from '@/object-record/record-group/components/RecordGroupAggregateDropdownOptionsContent';
-import { DateAggregateOperations } from '@/object-record/record-table/constants/DateAggregateOperations';
+import { RECORD_GROUP_AGGREGATE_FIELDS_PAGE_ID } from '@/object-record/record-group/constants/RecordGroupAggregateFieldsPageId';
 import { COUNT_AGGREGATE_OPERATION_OPTIONS } from '@/object-record/record-table/record-table-footer/constants/countAggregateOperationOptions';
+import { DATE_AGGREGATE_OPERATION_OPTIONS } from '@/object-record/record-table/record-table-footer/constants/dateAggregateOperationOptions';
 import { NON_STANDARD_AGGREGATE_OPERATION_OPTIONS } from '@/object-record/record-table/record-table-footer/constants/nonStandardAggregateOperationsOptions';
 import { PERCENT_AGGREGATE_OPERATION_OPTIONS } from '@/object-record/record-table/record-table-footer/constants/percentAggregateOperationOptions';
 import { getAvailableFieldsIdsForAggregationFromObjectFields } from '@/object-record/utils/getAvailableFieldsIdsForAggregationFromObjectFields';
@@ -48,10 +48,7 @@ export const RecordGroupAggregateDropdownContent = ({
     {
       id: 'datesAggregateOperationOptions',
       title: t`Date`,
-      operations: [
-        DateAggregateOperations.EARLIEST,
-        DateAggregateOperations.LATEST,
-      ],
+      operations: DATE_AGGREGATE_OPERATION_OPTIONS,
     },
     {
       id: 'moreAggregateOperationOptions',
@@ -63,7 +60,13 @@ export const RecordGroupAggregateDropdownContent = ({
   return (
     <>
       <Dropdown.Page id="root">
-        <RecordGroupAggregateDropdownMenuContent />
+        <Dropdown.Section>
+          {pages.map((page) => (
+            <Dropdown.ActionItem key={page.id} page={page.id}>
+              {page.title}
+            </Dropdown.ActionItem>
+          ))}
+        </Dropdown.Section>
       </Dropdown.Page>
       {pages.map((page) => (
         <Dropdown.Page key={page.id} id={page.id}>
@@ -79,7 +82,7 @@ export const RecordGroupAggregateDropdownContent = ({
           />
         </Dropdown.Page>
       ))}
-      <Dropdown.Page id="aggregateFields">
+      <Dropdown.Page id={RECORD_GROUP_AGGREGATE_FIELDS_PAGE_ID}>
         <RecordGroupAggregateDropdownFieldsContent
           objectMetadataItem={objectMetadataItem}
         />

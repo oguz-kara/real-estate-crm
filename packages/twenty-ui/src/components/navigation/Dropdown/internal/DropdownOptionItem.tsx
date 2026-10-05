@@ -51,6 +51,11 @@ export const DropdownOptionItem = ({
   const itemFocus = useDropdownItemFocus({ id: itemId });
 
   const hasActions = isRenderableSlot(actions);
+  const isFocused = searchTargetId === itemId;
+  const resolvedIndicator =
+    indicator ?? (hasSelectionState ? selectionIndicator : 'none');
+  const isCheckIndicatorRenderedByRow =
+    hasActions && resolvedIndicator === 'check';
 
   const item = (
     <ButtonPrimitive
@@ -95,10 +100,8 @@ export const DropdownOptionItem = ({
           )}
           disabled={disabled}
           selected={selected}
-          focused={searchTargetId === itemId}
-          indicator={
-            indicator ?? (hasSelectionState ? selectionIndicator : 'none')
-          }
+          focused={isFocused}
+          indicator={isCheckIndicatorRenderedByRow ? 'none' : resolvedIndicator}
           color={color}
           startIcon={startIcon}
           endIcon={endIcon}
@@ -107,7 +110,7 @@ export const DropdownOptionItem = ({
           descriptionPlacement={descriptionPlacement}
           shortcut={shortcut}
           shortcutJoinLabel={shortcutJoinLabel}
-          hasSubmenu={hasSubmenu}
+          hasSubmenu={!hasActions && hasSubmenu}
         >
           {children}
         </ListItem>
@@ -121,9 +124,10 @@ export const DropdownOptionItem = ({
       actionsVisibility={actionsVisibility}
       color={color}
       selected={selected}
-      focused={searchTargetId === itemId}
-      indicator={indicator ?? (hasSelectionState ? selectionIndicator : 'none')}
+      focused={isFocused}
+      indicator={resolvedIndicator}
       disabled={disabled}
+      hasSubmenu={hasSubmenu}
     >
       {item}
     </DropdownItemWithActions>
