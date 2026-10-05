@@ -384,7 +384,7 @@ export const IdentifierBarNarrow: Story = {
 
     expect(
       await body.findByRole('button', { name: 'Revenue' }),
-    ).toHaveAttribute('aria-pressed', 'true');
+    ).toHaveAttribute('aria-current', 'true');
 
     await userEvent.click(body.getByRole('button', { name: 'Revenue' }));
     await userEvent.click(canvas.getByRole('button', { name: 'New Tab' }));

@@ -1,6 +1,4 @@
 import { type EnrichedObjectMetadataItem } from '@/object-metadata/types/EnrichedObjectMetadataItem';
-import { getNonReadableFieldMetadataIdsFromObjectPermissions } from '@/object-metadata/utils/getNonReadableFieldMetadataIdsFromObjectPermissions';
-import { useObjectPermissions } from '@/object-record/hooks/useObjectPermissions';
 import { RecordGroupAggregateDropdownFieldsContent } from '@/object-record/record-group/components/RecordGroupAggregateDropdownFieldsContent';
 import { RecordGroupAggregateDropdownOptionsContent } from '@/object-record/record-group/components/RecordGroupAggregateDropdownOptionsContent';
 import { RECORD_GROUP_AGGREGATE_FIELDS_PAGE_ID } from '@/object-record/record-group/constants/RecordGroupAggregateFieldsPageId';
@@ -9,7 +7,6 @@ import { DATE_AGGREGATE_OPERATION_OPTIONS } from '@/object-record/record-table/r
 import { NON_STANDARD_AGGREGATE_OPERATION_OPTIONS } from '@/object-record/record-table/record-table-footer/constants/nonStandardAggregateOperationsOptions';
 import { PERCENT_AGGREGATE_OPERATION_OPTIONS } from '@/object-record/record-table/record-table-footer/constants/percentAggregateOperationOptions';
 import { getAvailableFieldsIdsForAggregationFromObjectFields } from '@/object-record/utils/getAvailableFieldsIdsForAggregationFromObjectFields';
-import { getObjectPermissionsFromMapByObjectMetadataId } from '@/settings/roles/role-permissions/objects-permissions/utils/getObjectPermissionsFromMapByObjectMetadataId';
 import { t } from '@lingui/core/macro';
 import { Dropdown } from 'twenty-ui/components';
 
@@ -20,19 +17,7 @@ type RecordGroupAggregateDropdownContentProps = {
 export const RecordGroupAggregateDropdownContent = ({
   objectMetadataItem,
 }: RecordGroupAggregateDropdownContentProps) => {
-  const { objectPermissionsByObjectMetadataId } = useObjectPermissions();
-
-  const restrictedFieldMetadataIds =
-    getNonReadableFieldMetadataIdsFromObjectPermissions({
-      objectPermissions: getObjectPermissionsFromMapByObjectMetadataId({
-        objectPermissionsByObjectMetadataId,
-        objectMetadataId: objectMetadataItem.id,
-      }),
-    });
-
-  const readableFields = objectMetadataItem.fields.filter(
-    (field) => !restrictedFieldMetadataIds.includes(field.id),
-  );
+  const { readableFields } = objectMetadataItem;
 
   const pages = [
     {
