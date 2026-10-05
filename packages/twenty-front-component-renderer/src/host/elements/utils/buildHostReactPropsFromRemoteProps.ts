@@ -1,6 +1,7 @@
 import { isFunction, isUndefined } from '@sniptt/guards';
 import { isDefined } from 'twenty-shared/utils';
 
+import { INPUT_SELECTION_BRIDGE_PROPERTIES } from '@/constants/InputSelectionBridgeProperties';
 import { DOM_EVENT_TYPE_TO_REACT_PROP } from '@/constants/DomEventTypeToReactProp';
 import { type FindRemoteElementIdContainingNode } from '@/host/geometry/types/FindRemoteElementIdContainingNode';
 import { hasDangerousUrlScheme } from '@/host/elements/utils/hasDangerousUrlScheme';
@@ -11,7 +12,13 @@ import { parseCssString } from '@/host/elements/utils/parseCssString';
 import { wrapEventHandler } from '@/host/events/utils/wrapEventHandler';
 import { type SerializedEventData } from '@/types/SerializedEventData';
 
-const INTERNAL_PROPS = new Set(['element', 'receiver', 'components', 'ref']);
+const INTERNAL_PROPS = new Set([
+  'element',
+  'receiver',
+  'components',
+  'ref',
+  ...Object.values(INPUT_SELECTION_BRIDGE_PROPERTIES),
+]);
 
 // Both spellings are indexed: dblclick arrives as ondblclick or onDoubleClick.
 const LOWERCASE_EVENT_PROP_TO_REACT_PROP: Record<string, string> =

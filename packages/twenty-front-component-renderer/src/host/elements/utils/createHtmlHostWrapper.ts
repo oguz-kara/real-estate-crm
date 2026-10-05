@@ -1,3 +1,4 @@
+import { INPUT_SELECTION_BRIDGE_PROPERTIES } from '@/constants/InputSelectionBridgeProperties';
 import { isArray } from '@sniptt/guards';
 import React from 'react';
 
@@ -65,10 +66,12 @@ export const createHtmlHostWrapper = (htmlTag: string) => {
       composedElementRef,
     } = useHtmlHostElementProps({ props, htmlTag });
 
-    const caretPreservingElementRef = useCaretPreservingElementRef(
+    const caretPreservingElementRef = useCaretPreservingElementRef({
       composedElementRef,
-      reactBindableProps.value,
-    );
+      value: reactBindableProps.value,
+      selectionRequest: props[INPUT_SELECTION_BRIDGE_PROPERTIES.request],
+      onSelectionUpdate: props[INPUT_SELECTION_BRIDGE_PROPERTIES.update],
+    });
 
     if (
       caretPreservingTag === 'textarea' ||

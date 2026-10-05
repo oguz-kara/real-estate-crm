@@ -15,7 +15,8 @@ listed known error and rejects any other error.
 | Fixture | Components |
 | --- | --- |
 | `twenty-ui-field-controls` | Field, Input, InputGroup, Textarea |
-| `twenty-ui-number-stepper` | NumberStepper (keyboard bounds, disabled/read-only state, named form values and submission) |
+| `twenty-ui-number-stepper` | NumberStepper (pointer stepping, selected-range paste, caret restoration, keyboard bounds, disabled/read-only state and forms) |
+| `twenty-ui-autocomplete` | Autocomplete (inline Home/End, controlled editing, composing confirmation, filtering, disabled state and Empty cleanup; `TwentyUiAutocomplete.stories.tsx`) |
 | `twenty-ui-display-helpers` | Text |
 | `twenty-ui-image-input` | ImageInput |
 | `twenty-ui-list-item` | ListItem (selection, disabled and submenu rows, overflow tooltip with a scoped theme container) |
@@ -58,6 +59,20 @@ worker measurements are zero until the host snapshot arrives. The story waits
 for that snapshot and re-enters after enabling the tooltip; opening
 on the first hover remains a geometry limitation.
 
+Input and textarea selection state comes from host snapshots. Owned selection
+requests commit with controlled values, and detached controls discard their pending
+commands and subscriptions. NumberStepper stories verify exactly-once stepping,
+selected-range replacement and continued mid-string editing in both runtimes.
+
+The Autocomplete fixture uses the public inline list interface to isolate input
+behavior from popup support. Composition events preserve interim text and defer
+filtering. A composing Enter does not activate an item or submit the form; a later
+ordinary Enter activates the highlighted item once. Popup selection filling the
+input remains part of the portal acceptance. Empty uses worker-local text traversal
+in DOM order and restores its temporary announcement marker on its timer or cleanup.
+The narrow TreeWalker supports SHOW_TEXT, nextNode and currentNode without callback
+filters; document Selection and DOM Range are outside this scope.
+
 ## Known sandbox limitations
 
 These are compatibility regression stories, not assertions that the components
@@ -70,9 +85,8 @@ expected-to-fail by the runner.
 
 | Component | Current limitation |
 | --- | --- |
-| NumberStepper | Pointer stepping fails because the worker input does not implement `setSelectionRange`. Pasting is not covered: without `selectionStart`/`selectionEnd`, Base UI inserts the pasted text around the whole value and reports that number, then its caret restore throws from a layout effect, which unmounts the React tree and stops Preact rendering. Separate React and Preact stories assert the pointer gap and successful typing, keyboard bounds, disabled/read-only state, named form values and submission. |
 | ImageInput | Native file picker activation and usable file contents are unavailable in the sandbox. The fixture checks forwarded file metadata, preview recovery, action callbacks, and supplied error changes. See the [ImageInput documentation](../../../../twenty-docs/ui/components/image-input.mdx). |
-| Popover, Dialog, AlertDialog, Menu, Select, Dropdown, CurrencyPicker, PhoneCountryPicker, CountrySelect (React and Preact) | The trigger opens the overlay, but the popup portals into the sandbox `document.body`, which never reaches the host, so its content stays invisible. Search, selection, dismissal and focus restoration are not covered yet. |
+| Popover, Dialog, AlertDialog, Menu, Select, Dropdown, CurrencyPicker, PhoneCountryPicker, CountrySelect, Autocomplete (React and Preact) | The trigger opens the overlay, but the popup portals into the sandbox `document.body`, which never reaches the host, so its content stays invisible. Search, selection, dismissal and focus restoration are not covered yet. |
 | Slider | Thumbs stay hidden because the sandbox has no `ResizeObserver` to re-measure after the first geometry batch. |
 | Responsive hooks | The sandbox `window.matchMedia` answers for the widget's own box, so `useIsMobile` follows the widget width rather than the browser viewport: a widget 768px wide or narrower gets the mobile layout, and Button drops its hotkey hint, on any screen. `useIsTouchDevice` follows the primary input of the host device, so it is `false` under the desktop Chromium that runs these stories. The fixture asserts both at a 1024px and a 400px widget width. |
 
@@ -144,6 +158,7 @@ The CountrySelect and reading-directions fixtures live in their own story
 files, so run them separately:
 
 ```sh
+npx vitest run --config vitest.storybook.config.ts TwentyUiAutocomplete.stories.tsx
 npx vitest run --config vitest.storybook.config.ts TwentyUiCountrySelect.stories.tsx
 npx vitest run --config vitest.storybook.config.ts TwentyUiReadingDirections.stories.tsx
 ```

@@ -1,4 +1,4 @@
-import { isBoolean, isString } from '@sniptt/guards';
+import { isBoolean, isNumber, isString } from '@sniptt/guards';
 
 import { type SerializedEventData } from '@/types/SerializedEventData';
 
@@ -14,6 +14,12 @@ export const applyKeyboardEventProperties = ({
   }
   if (isString(domEvent.code)) {
     serialized.code = domEvent.code;
+  }
+  if (isNumber(domEvent.which)) {
+    serialized.which = domEvent.which;
+  }
+  if (isNumber(domEvent.keyCode)) {
+    serialized.keyCode = domEvent.keyCode;
   }
   if (isBoolean(domEvent.repeat)) {
     serialized.repeat = domEvent.repeat;
