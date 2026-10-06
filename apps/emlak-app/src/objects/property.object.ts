@@ -6,6 +6,10 @@ import {
   type PropertyFieldName,
 } from 'src/constants/property-field-ids';
 import {
+  type LocalizedText,
+  resolveLabel,
+} from 'src/constants/app-locale';
+import {
   PROPERTY_MULTI_SELECT_OPTIONS,
   PROPERTY_SELECT_OPTIONS,
 } from 'src/constants/property-options';
@@ -14,14 +18,14 @@ export { PROPERTY_UNIVERSAL_IDENTIFIER };
 
 const selectField = (
   name: PropertyFieldName,
-  label: string,
+  label: LocalizedText,
   icon: string,
   defaultValue?: string,
 ) => ({
   universalIdentifier: PROPERTY_FIELD_IDS[name],
   name,
   type: FieldType.SELECT as const,
-  label,
+  label: resolveLabel(label),
   icon,
   options: [...PROPERTY_SELECT_OPTIONS[name]],
   ...(defaultValue === undefined ? {} : { defaultValue }),
@@ -29,55 +33,55 @@ const selectField = (
 
 const multiSelectField = (
   name: PropertyFieldName,
-  label: string,
+  label: LocalizedText,
   icon: string,
 ) => ({
   universalIdentifier: PROPERTY_FIELD_IDS[name],
   name,
   type: FieldType.MULTI_SELECT as const,
-  label,
+  label: resolveLabel(label),
   icon,
   options: [...PROPERTY_MULTI_SELECT_OPTIONS[name]],
 });
 
-const intField = (name: PropertyFieldName, label: string, icon: string) => ({
+const intField = (name: PropertyFieldName, label: LocalizedText, icon: string) => ({
   universalIdentifier: PROPERTY_FIELD_IDS[name],
   name,
   type: FieldType.NUMBER as const,
-  label,
+  label: resolveLabel(label),
   icon,
   universalSettings: { dataType: NumberDataType.INT },
 });
 
-const textField = (name: PropertyFieldName, label: string, icon: string) => ({
+const textField = (name: PropertyFieldName, label: LocalizedText, icon: string) => ({
   universalIdentifier: PROPERTY_FIELD_IDS[name],
   name,
   type: FieldType.TEXT as const,
-  label,
+  label: resolveLabel(label),
   icon,
 });
 
 const booleanField = (
   name: PropertyFieldName,
-  label: string,
+  label: LocalizedText,
   icon: string,
 ) => ({
   universalIdentifier: PROPERTY_FIELD_IDS[name],
   name,
   type: FieldType.BOOLEAN as const,
-  label,
+  label: resolveLabel(label),
   icon,
 });
 
 const currencyField = (
   name: PropertyFieldName,
-  label: string,
+  label: LocalizedText,
   icon: string,
 ) => ({
   universalIdentifier: PROPERTY_FIELD_IDS[name],
   name,
   type: FieldType.CURRENCY as const,
-  label,
+  label: resolveLabel(label),
   icon,
   defaultValue: { amountMicros: null, currencyCode: "'TRY'" },
 });
@@ -86,9 +90,12 @@ export default defineObject({
   universalIdentifier: PROPERTY_UNIVERSAL_IDENTIFIER,
   nameSingular: 'property',
   namePlural: 'properties',
-  labelSingular: 'Portföy',
-  labelPlural: 'Portföyler',
-  description: 'Sahibinden şemasıyla uyumlu emlak portföyü',
+  labelSingular: resolveLabel({ tr: 'Portföy', en: 'Property' }),
+  labelPlural: resolveLabel({ tr: 'Portföyler', en: 'Properties' }),
+  description: resolveLabel({
+    tr: 'Sahibinden şemasıyla uyumlu emlak portföyü',
+    en: 'Real-estate listing aligned with the sahibinden schema',
+  }),
   icon: 'IconBuildingCommunity',
   fields: [
     // core
@@ -109,14 +116,14 @@ export default defineObject({
       universalIdentifier: PROPERTY_FIELD_IDS.latitude,
       name: 'latitude',
       type: FieldType.NUMBER as const,
-      label: 'Enlem',
+      label: resolveLabel('Enlem'),
       icon: 'IconWorldLatitude',
     },
     {
       universalIdentifier: PROPERTY_FIELD_IDS.longitude,
       name: 'longitude',
       type: FieldType.NUMBER as const,
-      label: 'Boylam',
+      label: resolveLabel('Boylam'),
       icon: 'IconWorldLongitude',
     },
     intField('sqmGross', 'Brüt m²', 'IconRulerMeasure'),
@@ -129,21 +136,21 @@ export default defineObject({
       universalIdentifier: PROPERTY_FIELD_IDS.imageFiles,
       name: 'imageFiles',
       type: FieldType.ARRAY as const,
-      label: 'Görsel Dosyaları',
+      label: resolveLabel('Görsel Dosyaları'),
       icon: 'IconPhoto',
     },
     {
       universalIdentifier: PROPERTY_FIELD_IDS.videoFiles,
       name: 'videoFiles',
       type: FieldType.ARRAY as const,
-      label: 'Video Dosyaları',
+      label: resolveLabel('Video Dosyaları'),
       icon: 'IconVideo',
     },
     {
       universalIdentifier: PROPERTY_FIELD_IDS.importNotes,
       name: 'importNotes',
       type: FieldType.RAW_JSON as const,
-      label: 'Import Notları',
+      label: resolveLabel('Import Notları'),
       icon: 'IconNotes',
       description: 'Import sırasında eşlenemeyen ham anahtar ve değerler',
     },

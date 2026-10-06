@@ -1,10 +1,11 @@
 import { defineView, ViewFilterOperand, ViewType } from 'twenty-sdk/define';
 
+import { resolveLabel } from 'src/constants/app-locale';
 import { PROPERTY_FIELD_IDS, PROPERTY_UNIVERSAL_IDENTIFIER } from 'src/constants/property-field-ids';
 
 export default defineView({
   universalIdentifier: '3900558f-56f9-471e-8b70-960193a7a2c1',
-  name: 'Arsalar',
+  name: resolveLabel({ tr: 'Arsalar', en: 'Land' }),
   objectUniversalIdentifier: PROPERTY_UNIVERSAL_IDENTIFIER,
   type: ViewType.TABLE,
   icon: 'IconMap',

@@ -1,10 +1,11 @@
 import { defineView, ViewFilterOperand, ViewType } from 'twenty-sdk/define';
 
+import { resolveLabel } from 'src/constants/app-locale';
 import { PROPERTY_FIELD_IDS, PROPERTY_UNIVERSAL_IDENTIFIER } from 'src/constants/property-field-ids';
 
 export default defineView({
   universalIdentifier: 'b3afae8e-0d7e-4729-8dcf-c3c2efb94713',
-  name: 'Kiralık Konut',
+  name: resolveLabel({ tr: 'Kiralık Konut', en: 'For Rent — Residential' }),
   objectUniversalIdentifier: PROPERTY_UNIVERSAL_IDENTIFIER,
   type: ViewType.TABLE,
   icon: 'IconKey',

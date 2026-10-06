@@ -217,6 +217,20 @@ testable key-less over MCP.
 4. Real import → verification queries → screenshot.
 5. Commit, push, update `docs/HANDOFF.md`.
 
+## Addendum (2026-10-06): locale-ready labels
+
+Approved in conversation after the initial implementation. Metadata labels
+(object, field, option, view names) are workspace-wide strings in Twenty, so
+the app resolves them once per sync: every label is a `LocalizedText`
+(`string` = Turkish-only, or `{ tr, en? }`), resolved by
+`src/constants/app-locale.ts` from `TWENTY_APP_LOCALE` (default `tr`). The
+sahibinden import lookups always key off the fixed Turkish label (`trLabel`),
+so switching the UI locale cannot break the import. Planned use: the office
+workspace syncs with `tr`, a demo workspace for the Upwork portfolio syncs
+with `TWENTY_APP_LOCALE=en` and holds synthetic İzmir data with English
+labels. English option translations are added incrementally later; a missing
+`en` falls back to `tr`.
+
 ## Open questions deferred to v2
 
 - Location as relations with il/ilçe/mahalle reference records (if text filters

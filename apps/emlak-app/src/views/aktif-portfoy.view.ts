@@ -1,10 +1,11 @@
 import { defineView, ViewFilterOperand, ViewType } from 'twenty-sdk/define';
 
+import { resolveLabel } from 'src/constants/app-locale';
 import { PROPERTY_FIELD_IDS, PROPERTY_UNIVERSAL_IDENTIFIER } from 'src/constants/property-field-ids';
 
 export default defineView({
   universalIdentifier: '7aff88a2-1ee4-45e5-856a-c8763ba1e8b0',
-  name: 'Aktif Portföy',
+  name: resolveLabel({ tr: 'Aktif Portföy', en: 'Active Portfolio' }),
   objectUniversalIdentifier: PROPERTY_UNIVERSAL_IDENTIFIER,
   type: ViewType.TABLE,
   icon: 'IconCircleCheck',

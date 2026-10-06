@@ -2,6 +2,12 @@
 // The object manifest and the sahibinden import mapper both read from here,
 // so the schema and the importer cannot drift apart. Labels are sahibinden's
 // raw Turkish strings; values are stable SCREAMING_SNAKE identifiers.
+import {
+  type LocalizedText,
+  resolveLabel,
+  trLabel,
+} from 'src/constants/app-locale';
+
 const OPTION_COLOR_PALETTE = [
   'blue',
   'green',
@@ -24,32 +30,44 @@ export type SelectOption = {
   color: SelectOptionColor;
 };
 
-const buildOptions = (
-  entries: ReadonlyArray<
-    readonly [value: string, label: string, color?: SelectOptionColor]
-  >,
-): readonly SelectOption[] =>
+type OptionEntry = readonly [
+  value: string,
+  label: LocalizedText,
+  color?: SelectOptionColor,
+];
+
+const buildOptions = (entries: ReadonlyArray<OptionEntry>): readonly SelectOption[] =>
   entries.map(([value, label, color], index) => ({
     value,
-    label,
+    label: resolveLabel(label),
     position: index,
     color: color ?? OPTION_COLOR_PALETTE[index % OPTION_COLOR_PALETTE.length],
   }));
 
-export const PROPERTY_SELECT_OPTIONS: Record<string, readonly SelectOption[]> = {
-  externalSource: buildOptions([
+const mapEntries = (
+  entrySets: Record<string, ReadonlyArray<OptionEntry>>,
+): Record<string, readonly SelectOption[]> =>
+  Object.fromEntries(
+    Object.entries(entrySets).map(([fieldName, entries]) => [
+      fieldName,
+      buildOptions(entries),
+    ]),
+  );
+
+const PROPERTY_SELECT_ENTRIES: Record<string, ReadonlyArray<OptionEntry>> = {
+  externalSource: [
     ['SAHIBINDEN', 'Sahibinden', 'orange'],
     ['MANUAL', 'Elle Giriş', 'gray'],
-  ]),
-  category: buildOptions([
+  ],
+  category: [
     ['KONUT', 'Konut', 'blue'],
     ['ISYERI', 'İşyeri', 'purple'],
     ['ARSA', 'Arsa', 'yellow'],
     ['BINA', 'Bina', 'orange'],
     ['DEVREMULK', 'Devremülk', 'turquoise'],
     ['TURISTIK_TESIS', 'Turistik Tesis', 'pink'],
-  ]),
-  subType: buildOptions([
+  ],
+  subType: [
     ['DAIRE', 'Daire'],
     ['REZIDANS', 'Rezidans'],
     ['MUSTAKIL_EV', 'Müstakil Ev'],
@@ -75,21 +93,21 @@ export const PROPERTY_SELECT_OPTIONS: Record<string, readonly SelectOption[]> = 
     ['BUTIK_OTEL', 'Butik Otel'],
     ['DEVREMULK', 'Devremülk'],
     ['DIGER', 'Diğer'],
-  ]),
-  listingType: buildOptions([
+  ],
+  listingType: [
     ['SATILIK', 'Satılık', 'green'],
     ['KIRALIK', 'Kiralık', 'blue'],
     ['DEVREN_SATILIK', 'Devren Satılık', 'orange'],
     ['DEVREN_KIRALIK', 'Devren Kiralık', 'yellow'],
-  ]),
-  status: buildOptions([
+  ],
+  status: [
     ['ACTIVE', 'Aktif', 'green'],
     ['OPTIONED', 'Opsiyonlu', 'yellow'],
     ['SOLD', 'Satıldı', 'gray'],
     ['RENTED', 'Kiralandı', 'purple'],
     ['PASSIVE', 'Pasif', 'gray'],
-  ]),
-  rooms: buildOptions([
+  ],
+  rooms: [
     ['R1_0', '1+0'],
     ['R1_1', '1+1'],
     ['R2_1', '2+1'],
@@ -103,8 +121,8 @@ export const PROPERTY_SELECT_OPTIONS: Record<string, readonly SelectOption[]> = 
     ['R6_1', '6+1'],
     ['R6_2', '6+2'],
     ['R7_PLUS', '7+ ve üzeri'],
-  ]),
-  buildingAge: buildOptions([
+  ],
+  buildingAge: [
     ['AGE_0', '0'],
     ['AGE_1', '1'],
     ['AGE_2', '2'],
@@ -117,8 +135,8 @@ export const PROPERTY_SELECT_OPTIONS: Record<string, readonly SelectOption[]> = 
     ['AGE_21_25', '21-25 arası'],
     ['AGE_26_30', '26-30 arası'],
     ['AGE_31_PLUS', '31 ve üzeri'],
-  ]),
-  floorLocation: buildOptions([
+  ],
+  floorLocation: [
     ['BODRUM_KAT', 'Bodrum Kat'],
     ['ZEMIN_KAT', 'Zemin Kat'],
     ['BAHCE_KATI', 'Bahçe Katı'],
@@ -130,8 +148,8 @@ export const PROPERTY_SELECT_OPTIONS: Record<string, readonly SelectOption[]> = 
       return [`FLOOR_${floor}`, floor] as const;
     }),
     ['FLOOR_21_PLUS', '21 ve üzeri'],
-  ]),
-  heating: buildOptions([
+  ],
+  heating: [
     ['YOK', 'Yok'],
     ['SOBA', 'Soba'],
     ['DOGALGAZ_SOBASI', 'Doğalgaz Sobası'],
@@ -149,32 +167,32 @@ export const PROPERTY_SELECT_OPTIONS: Record<string, readonly SelectOption[]> = 
     ['SOMINE', 'Şömine'],
     ['VRV', 'VRV'],
     ['ISI_POMPASI', 'Isı Pompası'],
-  ]),
-  creditEligible: buildOptions([
+  ],
+  creditEligible: [
     ['UYGUN', 'Uygun', 'green'],
     ['UYGUN_DEGIL', 'Uygun Değil', 'red'],
     ['BILINMIYOR', 'Bilinmiyor', 'gray'],
-  ]),
-  deedStatus: buildOptions([
+  ],
+  deedStatus: [
     ['KAT_MULKIYETLI', 'Kat Mülkiyetli'],
     ['KAT_IRTIFAKLI', 'Kat İrtifaklı'],
     ['HISSELI_TAPU', 'Hisseli Tapu'],
     ['MUSTAKIL_TAPULU', 'Müstakil Tapulu'],
     ['ARSA_TAPULU', 'Arsa Tapulu'],
     ['BILINMIYOR', 'Bilinmiyor'],
-  ]),
-  fromWho: buildOptions([
+  ],
+  fromWho: [
     ['SAHIBINDEN', 'Sahibinden'],
     ['EMLAK_OFISINDEN', 'Emlak Ofisinden'],
     ['INSAAT_FIRMASINDAN', 'İnşaat Firmasından'],
     ['BANKADAN', 'Bankadan'],
-  ]),
-  usageStatus: buildOptions([
+  ],
+  usageStatus: [
     ['BOS', 'Boş'],
     ['KIRACILI', 'Kiracılı'],
     ['MULK_SAHIBI', 'Mülk Sahibi'],
-  ]),
-  zoningStatus: buildOptions([
+  ],
+  zoningStatus: [
     ['IMARLI', 'İmarlı'],
     ['IMARSIZ', 'İmarsız'],
     ['ARSA', 'Arsa'],
@@ -185,11 +203,11 @@ export const PROPERTY_SELECT_OPTIONS: Record<string, readonly SelectOption[]> = 
     ['SANAYI_IMARLI', 'Sanayi İmarlı'],
     ['TURIZM_IMARLI', 'Turizm İmarlı'],
     ['DIGER', 'Diğer'],
-  ]),
+  ],
 };
 
-export const PROPERTY_MULTI_SELECT_OPTIONS: Record<string, readonly SelectOption[]> = {
-  interiorFeatures: buildOptions([
+const PROPERTY_MULTI_SELECT_ENTRIES: Record<string, ReadonlyArray<OptionEntry>> = {
+  interiorFeatures: [
     ['KLIMA', 'Klima'],
     ['BEYAZ_ESYA', 'Beyaz Eşya'],
     ['ANKASTRE_FIRIN', 'Ankastre Fırın'],
@@ -205,8 +223,8 @@ export const PROPERTY_MULTI_SELECT_OPTIONS: Record<string, readonly SelectOption
     ['KUVET', 'Küvet'],
     ['PANJUR', 'Panjur'],
     ['WIFI', 'Wi-Fi'],
-  ]),
-  exteriorFeatures: buildOptions([
+  ],
+  exteriorFeatures: [
     ['ASANSOR', 'Asansör'],
     ['OTOPARK', 'Otopark'],
     ['KAPALI_OTOPARK', 'Kapalı Otopark'],
@@ -222,8 +240,8 @@ export const PROPERTY_MULTI_SELECT_OPTIONS: Record<string, readonly SelectOption
     ['KAPICI', 'Kapıcı'],
     ['TENIS_KORTU', 'Tenis Kortu'],
     ['ISI_YALITIMI', 'Isı Yalıtımı'],
-  ]),
-  neighborhoodFeatures: buildOptions([
+  ],
+  neighborhoodFeatures: [
     ['ALISVERIS_MERKEZI', 'Alışveriş Merkezi'],
     ['BELEDIYE', 'Belediye'],
     ['CAMI', 'Cami'],
@@ -238,8 +256,8 @@ export const PROPERTY_MULTI_SELECT_OPTIONS: Record<string, readonly SelectOption
     ['SEMT_PAZARI', 'Semt Pazarı'],
     ['SPOR_SALONU', 'Spor Salonu'],
     ['UNIVERSITE', 'Üniversite'],
-  ]),
-  transportFeatures: buildOptions([
+  ],
+  transportFeatures: [
     ['ANAYOL', 'Anayol'],
     ['AVRASYA_TUNELI', 'Avrasya Tüneli'],
     ['BOGAZ_KOPRULERI', 'Boğaz Köprüleri'],
@@ -257,8 +275,8 @@ export const PROPERTY_MULTI_SELECT_OPTIONS: Record<string, readonly SelectOption
     ['TEM', 'TEM'],
     ['TRAMVAY', 'Tramvay'],
     ['TREN_ISTASYONU', 'Tren İstasyonu'],
-  ]),
-  view: buildOptions([
+  ],
+  view: [
     ['BOGAZ', 'Boğaz'],
     ['DENIZ', 'Deniz'],
     ['DOGA', 'Doğa'],
@@ -266,8 +284,8 @@ export const PROPERTY_MULTI_SELECT_OPTIONS: Record<string, readonly SelectOption
     ['HAVUZ', 'Havuz'],
     ['PARK_YESIL_ALAN', 'Park & Yeşil Alan'],
     ['SEHIR', 'Şehir'],
-  ]),
-  infrastructure: buildOptions([
+  ],
+  infrastructure: [
     ['ELEKTRIK', 'Elektrik'],
     ['SANAYI_ELEKTRIGI', 'Sanayi Elektriği'],
     ['SU', 'Su'],
@@ -278,38 +296,48 @@ export const PROPERTY_MULTI_SELECT_OPTIONS: Record<string, readonly SelectOption
     ['SONDAJ_KUYU', 'Sondaj & Kuyu'],
     ['YOLU_ACILMIS', 'Yolu Açılmış'],
     ['YOLU_ACILMAMIS', 'Yolu Açılmamış'],
-  ]),
+  ],
 };
+
+export const PROPERTY_SELECT_OPTIONS: Record<string, readonly SelectOption[]> =
+  mapEntries(PROPERTY_SELECT_ENTRIES);
+
+export const PROPERTY_MULTI_SELECT_OPTIONS: Record<string, readonly SelectOption[]> =
+  mapEntries(PROPERTY_MULTI_SELECT_ENTRIES);
 
 // Shared amenity resolution: a label/value appearing in several groups
 // (SAHIL, SPOR_SALONU) resolves FIRST-WINS here, and both the import mapper
 // and the filter builder consume these indexes — import placement and
-// search target can never diverge.
+// search target can never diverge. Keys are the fixed TURKISH labels
+// (trLabel), never the UI locale, so switching the UI to en cannot break
+// the sahibinden import.
 export const AMENITY_LABEL_TO_FIELD_VALUE: Record<
   string,
   readonly [fieldName: string, value: string]
 > = {};
 export const AMENITY_VALUE_TO_FIELD: Record<string, string> = {};
 
-for (const [fieldName, options] of Object.entries(PROPERTY_MULTI_SELECT_OPTIONS)) {
-  for (const option of options) {
-    AMENITY_LABEL_TO_FIELD_VALUE[option.label] ??= [fieldName, option.value];
-    AMENITY_VALUE_TO_FIELD[option.value] ??= fieldName;
+for (const [fieldName, entries] of Object.entries(PROPERTY_MULTI_SELECT_ENTRIES)) {
+  for (const [value, label] of entries) {
+    AMENITY_LABEL_TO_FIELD_VALUE[trLabel(label)] ??= [fieldName, value];
+    AMENITY_VALUE_TO_FIELD[value] ??= fieldName;
   }
 }
 
-const buildLabelLookup = (
-  optionSets: Record<string, readonly SelectOption[]>,
+const buildTurkishLabelLookup = (
+  entrySets: Record<string, ReadonlyArray<OptionEntry>>,
 ): Record<string, Record<string, string>> =>
   Object.fromEntries(
-    Object.entries(optionSets).map(([fieldName, options]) => [
+    Object.entries(entrySets).map(([fieldName, entries]) => [
       fieldName,
-      Object.fromEntries(options.map((option) => [option.label, option.value])),
+      Object.fromEntries(
+        entries.map(([value, label]) => [trLabel(label), value]),
+      ),
     ]),
   );
 
 export const SAHIBINDEN_LABEL_TO_VALUE: Record<string, Record<string, string>> =
-  buildLabelLookup({
-    ...PROPERTY_SELECT_OPTIONS,
-    ...PROPERTY_MULTI_SELECT_OPTIONS,
+  buildTurkishLabelLookup({
+    ...PROPERTY_SELECT_ENTRIES,
+    ...PROPERTY_MULTI_SELECT_ENTRIES,
   });
