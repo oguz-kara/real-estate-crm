@@ -1,18 +1,86 @@
-import { defineObject, FieldType } from 'twenty-sdk/define';
+import { defineObject, FieldType, NumberDataType } from 'twenty-sdk/define';
 
-export const PROPERTY_UNIVERSAL_IDENTIFIER = 'be5c8200-281d-4889-8794-3f0cb232b5c0';
+import {
+  PROPERTY_FIELD_IDS,
+  PROPERTY_UNIVERSAL_IDENTIFIER,
+  type PropertyFieldName,
+} from 'src/constants/property-field-ids';
+import {
+  PROPERTY_MULTI_SELECT_OPTIONS,
+  PROPERTY_SELECT_OPTIONS,
+} from 'src/constants/property-options';
 
-export const PROPERTY_FIELD_IDS = {
-  propertyType: '777be1d2-59f8-480a-9278-5457f4b44b6e',
-  listingType: '58241732-735f-45e8-8de4-6a7fefe82834',
-  status: '0e790154-8325-4308-b764-f5b38eee0343',
-  price: 'b3783629-3975-4b07-98dd-19f2b909420a',
-  address: '0ee7f39b-abc9-4193-a5dd-c3ef0b9fa579',
-  rooms: 'b28ea39c-03c1-44bd-82c7-a2da49560045',
-  areaNet: '03332cb2-1598-435a-ab25-36a41db76a3e',
-  areaGross: 'b5380694-1bb2-4d75-bc9a-d9b81cf46fef',
-  description: '8247f514-1cb2-4724-85ca-13c1bb78e6e7',
-} as const;
+export { PROPERTY_UNIVERSAL_IDENTIFIER };
+
+const selectField = (
+  name: PropertyFieldName,
+  label: string,
+  icon: string,
+  defaultValue?: string,
+) => ({
+  universalIdentifier: PROPERTY_FIELD_IDS[name],
+  name,
+  type: FieldType.SELECT as const,
+  label,
+  icon,
+  options: [...PROPERTY_SELECT_OPTIONS[name]],
+  ...(defaultValue === undefined ? {} : { defaultValue }),
+});
+
+const multiSelectField = (
+  name: PropertyFieldName,
+  label: string,
+  icon: string,
+) => ({
+  universalIdentifier: PROPERTY_FIELD_IDS[name],
+  name,
+  type: FieldType.MULTI_SELECT as const,
+  label,
+  icon,
+  options: [...PROPERTY_MULTI_SELECT_OPTIONS[name]],
+});
+
+const intField = (name: PropertyFieldName, label: string, icon: string) => ({
+  universalIdentifier: PROPERTY_FIELD_IDS[name],
+  name,
+  type: FieldType.NUMBER as const,
+  label,
+  icon,
+  universalSettings: { dataType: NumberDataType.INT },
+});
+
+const textField = (name: PropertyFieldName, label: string, icon: string) => ({
+  universalIdentifier: PROPERTY_FIELD_IDS[name],
+  name,
+  type: FieldType.TEXT as const,
+  label,
+  icon,
+});
+
+const booleanField = (
+  name: PropertyFieldName,
+  label: string,
+  icon: string,
+) => ({
+  universalIdentifier: PROPERTY_FIELD_IDS[name],
+  name,
+  type: FieldType.BOOLEAN as const,
+  label,
+  icon,
+});
+
+const currencyField = (
+  name: PropertyFieldName,
+  label: string,
+  icon: string,
+) => ({
+  universalIdentifier: PROPERTY_FIELD_IDS[name],
+  name,
+  type: FieldType.CURRENCY as const,
+  label,
+  icon,
+  defaultValue: { amountMicros: null, currencyCode: "'TRY'" },
+});
 
 export default defineObject({
   universalIdentifier: PROPERTY_UNIVERSAL_IDENTIFIER,
@@ -20,94 +88,97 @@ export default defineObject({
   namePlural: 'properties',
   labelSingular: 'Portföy',
   labelPlural: 'Portföyler',
-  description: 'Satılık veya kiralık emlak portföyü',
+  description: 'Sahibinden şemasıyla uyumlu emlak portföyü',
   icon: 'IconBuildingCommunity',
   fields: [
+    // core
     {
-      universalIdentifier: PROPERTY_FIELD_IDS.propertyType,
-      name: 'propertyType',
-      type: FieldType.SELECT,
-      label: 'Emlak Tipi',
-      icon: 'IconCategory',
-      options: [
-        { value: 'APARTMENT', label: 'Daire', position: 0, color: 'blue' },
-        { value: 'VILLA', label: 'Villa', position: 1, color: 'green' },
-        { value: 'LAND', label: 'Arsa', position: 2, color: 'yellow' },
-        { value: 'OFFICE', label: 'Ofis', position: 3, color: 'purple' },
-        { value: 'SHOP', label: 'Dükkan', position: 4, color: 'orange' },
-      ],
+      ...textField('externalId', 'İlan No', 'IconHash'),
+      description: 'Kaynak sistemdeki benzersiz ilan kimliği',
+    },
+    selectField('externalSource', 'Kaynak', 'IconDatabaseImport', "'MANUAL'"),
+    selectField('category', 'Kategori', 'IconCategory'),
+    selectField('subType', 'Emlak Tipi', 'IconHome'),
+    selectField('listingType', 'İlan Tipi', 'IconTag'),
+    selectField('status', 'Durum', 'IconCircleCheck', "'ACTIVE'"),
+    currencyField('price', 'Fiyat', 'IconCurrencyLira'),
+    textField('city', 'İl', 'IconMapPin'),
+    textField('district', 'İlçe', 'IconMapPin'),
+    textField('neighborhood', 'Mahalle', 'IconMapPin'),
+    {
+      universalIdentifier: PROPERTY_FIELD_IDS.latitude,
+      name: 'latitude',
+      type: FieldType.NUMBER as const,
+      label: 'Enlem',
+      icon: 'IconWorldLatitude',
     },
     {
-      universalIdentifier: PROPERTY_FIELD_IDS.listingType,
-      name: 'listingType',
-      type: FieldType.SELECT,
-      label: 'İlan Tipi',
-      icon: 'IconTag',
-      options: [
-        { value: 'SALE', label: 'Satılık', position: 0, color: 'green' },
-        { value: 'RENT', label: 'Kiralık', position: 1, color: 'blue' },
-      ],
+      universalIdentifier: PROPERTY_FIELD_IDS.longitude,
+      name: 'longitude',
+      type: FieldType.NUMBER as const,
+      label: 'Boylam',
+      icon: 'IconWorldLongitude',
+    },
+    intField('sqmGross', 'Brüt m²', 'IconRulerMeasure'),
+    intField('sqmNet', 'Net m²', 'IconRuler'),
+    {
+      ...textField('description', 'Açıklama', 'IconFileDescription'),
+      isSearchable: true,
     },
     {
-      universalIdentifier: PROPERTY_FIELD_IDS.status,
-      name: 'status',
-      type: FieldType.SELECT,
-      label: 'Durum',
-      icon: 'IconCircleCheck',
-      defaultValue: "'ACTIVE'",
-      options: [
-        { value: 'ACTIVE', label: 'Aktif', position: 0, color: 'green' },
-        { value: 'OPTIONED', label: 'Opsiyonlu', position: 1, color: 'yellow' },
-        { value: 'SOLD', label: 'Satıldı', position: 2, color: 'gray' },
-        { value: 'RENTED', label: 'Kiralandı', position: 3, color: 'purple' },
-        { value: 'PASSIVE', label: 'Pasif', position: 4, color: 'gray' },
-      ],
+      universalIdentifier: PROPERTY_FIELD_IDS.imageFiles,
+      name: 'imageFiles',
+      type: FieldType.ARRAY as const,
+      label: 'Görsel Dosyaları',
+      icon: 'IconPhoto',
     },
     {
-      universalIdentifier: PROPERTY_FIELD_IDS.price,
-      name: 'price',
-      type: FieldType.CURRENCY,
-      label: 'Fiyat',
-      icon: 'IconCurrencyLira',
-      defaultValue: { amountMicros: null, currencyCode: "'TRY'" },
+      universalIdentifier: PROPERTY_FIELD_IDS.videoFiles,
+      name: 'videoFiles',
+      type: FieldType.ARRAY as const,
+      label: 'Video Dosyaları',
+      icon: 'IconVideo',
     },
     {
-      universalIdentifier: PROPERTY_FIELD_IDS.address,
-      name: 'propertyAddress',
-      type: FieldType.ADDRESS,
-      label: 'Adres',
-      icon: 'IconMapPin',
+      universalIdentifier: PROPERTY_FIELD_IDS.importNotes,
+      name: 'importNotes',
+      type: FieldType.RAW_JSON as const,
+      label: 'Import Notları',
+      icon: 'IconNotes',
+      description: 'Import sırasında eşlenemeyen ham anahtar ve değerler',
     },
-    {
-      universalIdentifier: PROPERTY_FIELD_IDS.rooms,
-      name: 'rooms',
-      type: FieldType.TEXT,
-      label: 'Oda Sayısı',
-      description: 'Örn. 3+1, 2+1',
-      icon: 'IconDoor',
-    },
-    {
-      universalIdentifier: PROPERTY_FIELD_IDS.areaNet,
-      name: 'areaNet',
-      type: FieldType.NUMBER,
-      label: 'Net m²',
-      icon: 'IconRuler',
-      universalSettings: { dataType: 'int' },
-    },
-    {
-      universalIdentifier: PROPERTY_FIELD_IDS.areaGross,
-      name: 'areaGross',
-      type: FieldType.NUMBER,
-      label: 'Brüt m²',
-      icon: 'IconRulerMeasure',
-      universalSettings: { dataType: 'int' },
-    },
-    {
-      universalIdentifier: PROPERTY_FIELD_IDS.description,
-      name: 'description',
-      type: FieldType.TEXT,
-      label: 'Açıklama',
-      icon: 'IconFileDescription',
-    },
+    // konut / shared structural
+    selectField('rooms', 'Oda Sayısı', 'IconDoor'),
+    selectField('buildingAge', 'Bina Yaşı', 'IconCalendar'),
+    selectField('floorLocation', 'Bulunduğu Kat', 'IconStairs'),
+    intField('totalFloors', 'Kat Sayısı', 'IconBuilding'),
+    selectField('heating', 'Isıtma', 'IconFlame'),
+    intField('bathroomCount', 'Banyo Sayısı', 'IconBath'),
+    booleanField('balcony', 'Balkon', 'IconWindow'),
+    booleanField('furnished', 'Eşyalı', 'IconSofa'),
+    currencyField('dues', 'Aidat', 'IconReceipt'),
+    selectField('creditEligible', 'Krediye Uygun', 'IconCreditCard'),
+    selectField('deedStatus', 'Tapu Durumu', 'IconCertificate'),
+    selectField('fromWho', 'Kimden', 'IconUserCheck'),
+    booleanField('exchangeable', 'Takas', 'IconArrowsExchange'),
+    booleanField('inSite', 'Site İçerisinde', 'IconBuildingCommunity'),
+    textField('siteName', 'Site Adı', 'IconSignature'),
+    selectField('usageStatus', 'Kullanım Durumu', 'IconKey'),
+    // isyeri
+    currencyField('transferFee', 'Devren Bedeli', 'IconTransfer'),
+    // arsa
+    selectField('zoningStatus', 'İmar Durumu', 'IconMap'),
+    textField('blockNo', 'Ada No', 'IconGrid4x4'),
+    textField('parcelNo', 'Parsel No', 'IconGridDots'),
+    textField('kaks', 'Kaks (Emsal)', 'IconPercentage'),
+    textField('gabari', 'Gabari', 'IconArrowAutofitHeight'),
+    currencyField('pricePerSqm', 'm² Fiyatı', 'IconCalculator'),
+    // amenities
+    multiSelectField('interiorFeatures', 'İç Özellikler', 'IconArmchair'),
+    multiSelectField('exteriorFeatures', 'Dış Özellikler', 'IconBuildingSkyscraper'),
+    multiSelectField('neighborhoodFeatures', 'Muhit', 'IconMapSearch'),
+    multiSelectField('transportFeatures', 'Ulaşım', 'IconBus'),
+    multiSelectField('view', 'Manzara', 'IconEye'),
+    multiSelectField('infrastructure', 'Altyapı', 'IconPlug'),
   ],
 });
