@@ -17,7 +17,8 @@
     "import:sahibinden": "tsx scripts/import-sahibinden.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:unit": "vitest run --config vitest.unit.config.ts"
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "seed:portfolio": "tsx scripts/import-sahibinden.ts data/sahibinden-izmir-2026-10-06.json"
   },
   "devDependencies": {
     "@types/node": "^24.7.2",
