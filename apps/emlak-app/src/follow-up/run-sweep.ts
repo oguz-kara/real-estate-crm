@@ -26,7 +26,7 @@ export type SweepResult = {
 // The server caps every top-level page at 60; nested relation selections
 // are capped at 60 UNORDERED rows with the nested `first` ignored, which
 // is why touches are fetched with top-level queries paged to exhaustion.
-const PAGE_SIZE = 60;
+export const PAGE_SIZE = 60;
 
 type TrackedPerson = {
   id: string;
@@ -37,12 +37,12 @@ type TrackedPerson = {
   followUpTaskCreatedAt: string | null;
 };
 
-type ConnectionPage<TNode> = {
+export type ConnectionPage<TNode> = {
   edges?: Array<{ node: TNode }>;
   pageInfo?: { hasNextPage?: boolean; endCursor?: string | null };
 };
 
-const fetchAllPages = async <TNode>(
+export const fetchAllPages = async <TNode>(
   fetchPage: (after: string | undefined) => Promise<ConnectionPage<TNode> | undefined>,
 ): Promise<TNode[]> => {
   const nodes: TNode[] = [];
