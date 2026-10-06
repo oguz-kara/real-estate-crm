@@ -34,6 +34,9 @@ describe('CoreApiClient', () => {
         id: true,
       },
     });
+    if (created.createNote === undefined) {
+      throw new Error('createNote mutation returned no payload');
+    }
     expect(created.createNote.id).toBeDefined();
 
     await client.mutation({

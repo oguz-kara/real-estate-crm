@@ -2,13 +2,6 @@
 // The object manifest and the sahibinden import mapper both read from here,
 // so the schema and the importer cannot drift apart. Labels are sahibinden's
 // raw Turkish strings; values are stable SCREAMING_SNAKE identifiers.
-export type SelectOption = {
-  value: string;
-  label: string;
-  position: number;
-  color: string;
-};
-
 const OPTION_COLOR_PALETTE = [
   'blue',
   'green',
@@ -22,8 +15,19 @@ const OPTION_COLOR_PALETTE = [
   'gray',
 ] as const;
 
+type SelectOptionColor = (typeof OPTION_COLOR_PALETTE)[number];
+
+export type SelectOption = {
+  value: string;
+  label: string;
+  position: number;
+  color: SelectOptionColor;
+};
+
 const buildOptions = (
-  entries: ReadonlyArray<readonly [value: string, label: string, color?: string]>,
+  entries: ReadonlyArray<
+    readonly [value: string, label: string, color?: SelectOptionColor]
+  >,
 ): readonly SelectOption[] =>
   entries.map(([value, label, color], index) => ({
     value,
