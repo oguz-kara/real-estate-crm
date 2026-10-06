@@ -45,6 +45,8 @@ Update 2026-10-06: the Windows local setup was dropped. Development now happens 
 
 ## What is already done
 
+- `apps/emlak-app/`: the Emlak SDK app (feature 1). Defines the `property` object (Portföy) with type/listing/status selects, TRY price, address, rooms, areas and an `owner` relation to Person. Sync it to a workspace with `yarn twenty apply` from that folder after `twenty remote:add`. `node_modules` is not committed; run `yarn` there first.
+
 - `LOCAL-SETUP.md` (repo root): how it was set up and started on the Mac. The ports there (5433, 6380, 3002) were chosen only because the Mac had other projects running. On a clean machine use the default ports from the official docs.
 - `docs/PLATFORM-NOTES.md`: short note on what the platform supports, where permissions leak, and what needs a fork. Read it before proposing features.
 - `docs/PLATFORM-RESEARCH-FULL.md` and `docs/research-raw/`: every finding and every test step behind the short note.
