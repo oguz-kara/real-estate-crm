@@ -1,0 +1,191 @@
+{
+  "test": "apps",
+  "steps": [
+    {
+      "goal": "Pre-flight: server health, disk, baseline state",
+      "command": "curl -s http://localhost:3000/healthz; df -h ~; ls ~/.twenty; SELECT name,universalIdentifier,sourceType,version FROM core.application WHERE workspaceId=Apple; SELECT name,sourceType FROM core.applicationRegistration",
+      "observed": "healthz {\"status\":\"ok\"}; 5.9 GiB free; ~/.twenty missing; playground missing; Node v24.18.0, yarn 4.13.0 (corepack shim). Apple apps: Custom, Standard (local 1.0.1). Registrations: Custom x2, Twenty CLI (oauth-only).",
+      "status": "pass",
+      "note": "Baseline matches research Q1e-7."
+    },
+    {
+      "goal": "Log in as tim@apple.dev over GraphQL (step 1a)",
+      "command": "POST /metadata mutation getLoginTokenFromCredentials(email:\"tim@apple.dev\", password:<redacted>, origin:\"http://localhost:3002\"){loginToken{token}} then getAuthTokensFromLoginToken(loginToken:<redacted>, origin:\"http://localhost:3002\"){tokens{accessOrWorkspaceAgnosticToken{token}}}",
+      "observed": "HTTP 200, loginToken returned, then access token (668 chars). On /graphql the same mutation fails: 'Cannot query field getLoginTokenFromCredentials on type Mutation'. currentWorkspace -> Apple 20202020-1c25-4d02-bf25-6aeccf7ea419.",
+      "status": "pass",
+      "note": "Auth mutations live on /metadata only. User token stored as TWENTY_USER_TOKEN in .pn-env-apps (chmod 600)."
+    },
+    {
+      "goal": "Create API key pn-apps-key with Admin role and mint its token (step 1b)",
+      "command": "POST /metadata query getApiKeyRoles{id label}; mutation createApiKey(input:{name:\"pn-apps-key\", expiresAt:\"2026-10-10T14:53:04.000Z\", roleId:\"0b8af694-...(Admin)\"}){id}; mutation generateApiKeyToken(apiKeyId:\"ca80a1ba-c8b4-4f38-b884-a028d186450a\", expiresAt:<same>){token}  (Bearer <redacted user token>)",
+      "observed": "HTTP 200. Roles offered: Admin, Impersonate-only, Object-restricted. createApiKey -> id ca80a1ba-c8b4-4f38-b884-a028d186450a, expires 2026-10-10. generateApiKeyToken -> token (444 chars). currentWorkspace with key -> Apple. SQL: pn-apps-key | Admin.",
+      "status": "pass",
+      "note": "7-day expiry chosen so it lapses if nobody revokes it. tim's Object-restricted role could still bind Admin to the key. No server CLI command was needed."
+    },
+    {
+      "goal": "Neutralise browser and corepack side effects before scaffolding",
+      "command": "Created /Users/bussss/projects/twenty-playground/.pn-bin/open and .pn-bin/corepack (no-op shell scripts that log their args) and prefixed PATH with .pn-bin for every CLI call",
+      "observed": "command -v open corepack -> resolved to the .pn-bin shims.",
+      "status": "pass",
+      "note": "Source shows create-twenty-app always spawns `open <front>/page/<id>` after a successful sync and runs `corepack enable` (install.ts:74); the SDK's OAuth uses execFile('open'). The shims stop both without changing anything globally."
+    },
+    {
+      "goal": "Pre-seed a CLI remote for http://localhost:3000 so the scaffolder reuses it instead of starting OAuth",
+      "command": "COREPACK_ENABLE_DOWNLOAD_PROMPT=0 PATH=.pn-bin:$PATH npx -y -p twenty-sdk@2.44.0 twenty remote:add --url http://localhost:3000 --api-key <redacted> --as pn-local",
+      "observed": "'✓ Remote \"pn-local\" added (http://localhost:3000) via API key.' '✓ Default remote set to \"pn-local\".' exit 0, 29 s (npx download). ~/.twenty/config.json created, mode 600.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Scaffold pn-hello-world with the version that matches the server (step 2)",
+      "command": "cd /Users/bussss/projects/twenty-playground && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 PATH=.pn-bin:$PATH npx -y create-twenty-app@2.44.0 pn-hello-world --display-name \"PN Hello World\" --description \"PN scratch app\" --url http://localhost:3000",
+      "observed": "exit 0 in 60 s. Steps 1/6..6/6: scaffold, 'Enabling corepack', 'Running yarn install', git init + initial commit, '[5/6] Authenticating -> Reusing existing credentials', '[6/6] Running yarn twenty dev --once', 'Opening app welcome page: http://localhost:3002/page/ec01e4e5-...', '✔ Application created successfully!'",
+      "status": "pass",
+      "note": "No Docker (a non-2020 --url skips it) and no browser: open.log shows the shim got the welcome-page URL; corepack.log shows 'corepack enable' was intercepted. The scaffolder throws away the output of its inner `dev --once`, so I ran plan/apply afterwards to see the CLI output."
+    },
+    {
+      "goal": "Inspect the scaffold: pinned versions, entities, size, package manager (step 4)",
+      "command": "find pn-hello-world -not -path '*/node_modules/*'; grep twenty-* package.json; du -sh pn-hello-world pn-hello-world/node_modules; git log",
+      "observed": "twenty-sdk, twenty-client-sdk, twenty-ui = 2.44.0; packageManager yarn@4.13.0, nodeLinker node-modules; 427M total, 422M node_modules (187 top-level packages), .git 300K; commit 'Initial commit from Create Twenty App' using the machine's global git identity.",
+      "status": "pass",
+      "note": "Entities: application-config.ts (defineApplication), default-role.ts (defineApplicationRole: read/update/soft-delete all true, destroy false), logic-functions/health-check.ts (defineHealthCheck), front-components/main-page.tsx (defineFrontComponent), page-layouts/main-page.page-layout.ts (definePageLayout STANDALONE_PAGE, 1 tab, 1 FRONT_COMPONENT widget), navigation-menu-items/main-page.navigation-menu-item.ts. No objects, fields, views, agents, skills, command or settings menu items."
+    },
+    {
+      "goal": "CLI confirmation: remote status and read-only plan (step 3a)",
+      "command": "cd pn-hello-world && yarn twenty --version && yarn twenty remote:status && yarn twenty plan",
+      "observed": "2.44.0; Remote pn-local, Server http://localhost:3000, Auth 'api-key (valid)'. plan: '⚠ Page layout widget \" \" uses a deprecated vertical-list position...' then 'No changes. Twenty metadata matches your manifest.' '✓ Plan complete for PN Hello World' exit 0, 6 s.",
+      "status": "pass",
+      "note": "So the scaffolder's own sync had already applied the full manifest. The 2.44.0 template triggers its own deprecation warning."
+    },
+    {
+      "goal": "CLI confirmation: one-shot sync (step 3b)",
+      "command": "yarn twenty apply < /dev/null",
+      "observed": "Checking server, Building manifest, typecheck, 'No changes.', 'Registering application...', 'Uploading 7 files...', 'Syncing manifest...', 'Generating API client...', '✓ Synced PN Hello World (7 files)' exit 0, 8 s. No twenty process left afterwards.",
+      "status": "pass",
+      "note": "No watcher started (apply is one-shot)."
+    },
+    {
+      "goal": "GraphQL confirmation of the application and what it defines (step 3c)",
+      "command": "POST /metadata (Bearer <redacted key>) { findManyApplications { id name universalIdentifier version canBeUninstalled applicationRegistrationId } }; { findOneApplication(universalIdentifier:\"d52df439-4ba6-47ac-af6a-0b0c198aae09\"){ ... frontComponents logicFunctions objects commandMenuItems applicationRegistration{id} } }; { getPageLayouts { id universalIdentifier type } }",
+      "observed": "HTTP 200. PN Hello World id 1854522d-47af-417b-803e-1105f03f96b8, version 0.1.0, canBeUninstalled true, registration 52272dc2-98bd-49b3-8b1b-3ea0131cf406. frontComponents [PN Hello World 2d2020ca-...], logicFunctions [health-check 375ee729-...], objects [], commandMenuItems []. Page layout ec01e4e5-... STANDALONE_PAGE.",
+      "status": "pass",
+      "note": "First tries failed on field names: Application has no sourceType field and ApplicationRegistrationSummary has no name field. Removed them. defaultLogicFunctionRole came back null even though SQL shows defaultRoleId set (not investigated further)."
+    },
+    {
+      "goal": "SQL confirmation on the core schema (step 3d)",
+      "command": "SELECT on core.application, core.applicationRegistration, and counts on frontComponent/logicFunction/pageLayout/pageLayoutTab/pageLayoutWidget/navigationMenuItem/role/objectMetadata/fieldMetadata by applicationId; core.role; core.logicFunction; core.navigationMenuItem",
+      "observed": "application: PN Hello World | d52df439-... | local | 0.1.0 | defaultRoleId 9c8a2037-... | canBeUninstalled t. registration: PN Hello World | local | owned_by_apple t. Counts fc1 lf1 pl1 tab1 widget1 nav1 role1 objects0 fields0. health-check nodejs22.x timeout 300, no route/tool trigger. Nav item PAGE_LAYOUT pos -1, workspace-wide.",
+      "status": "pass",
+      "note": "Apple objectMetadata total 45. The app added no object metadata rows (the template defines no objects)."
+    },
+    {
+      "goal": "Run the hello-world logic function from the CLI (step 5)",
+      "command": "yarn twenty dev:function:exec -n health-check -p '{}'",
+      "observed": "'Executing function \"health-check\" on pn-local...' 'Authentication failed on remote \"pn-local\"' 'Execution failed: Authentication failed: GraphQL auth error in response' exit 1.",
+      "status": "fail",
+      "note": "Source: executeOneLogicFunction takes @AuthUser() without allowUndefined, so it needs a user-bound token, and an API-key remote can never call it. The CLI reports this as an authentication failure."
+    },
+    {
+      "goal": "Get the exact server error, then run the function over HTTP with a user session (fix 1)",
+      "command": "POST /metadata mutation executeOneLogicFunction(input:{id:\"375ee729-3791-4f48-aae4-9c559db31b53\", payload:{}}){data logs duration status error}  once with Bearer <redacted api key>, once with Bearer <redacted tim user token>",
+      "observed": "API key: HTTP 200, errors[0] FORBIDDEN 'This endpoint requires a token bound to a user workspace.' (statusCode 403). User token: HTTP 200 {\"data\":{\"status\":\"OK\"},\"logs\":\"\",\"duration\":40,\"status\":\"SUCCESS\",\"error\":null}.",
+      "status": "unexpected",
+      "note": "The function did run through the LOCAL driver (build layers in $TMPDIR/logic-function-executor-tmpdir/sdk/<ws>-<appUid>). It only worked with tim's session token, not with the app CLI's API key."
+    },
+    {
+      "goal": "Optional negative check: the SDK's built-in DEV_API_KEY on this instance",
+      "command": "POST /metadata { currentWorkspace { id } } with Bearer <public DEV_API_KEY from twenty-sdk constants>",
+      "observed": "HTTP 200, errors 'Token invalid.' code UNAUTHENTICATED.",
+      "status": "pass",
+      "note": "Confirms the scaffolder's default apiKey path, and the template's vitest default key, cannot work against this instance."
+    },
+    {
+      "goal": "Record footprint outside the playground",
+      "command": "diff ~/.npm/_npx listing before/after; count ~/.yarn/berry/cache; ls ~/.twenty; find packages/twenty-server/.local-storage -newer start-marker; SELECT core.file WHERE applicationId=app",
+      "observed": "New npx dirs c78e399cf86fa764 (twenty-sdk, 147M) and e6631b39351174ac (create-twenty-app+twenty-sdk, 150M); yarn global cache 4507 -> 4583 files; ~/.twenty/config.json (remote pn-local, defaultRemote pn-local). Server stored 8 files (~1.6 MB) under packages/twenty-server/.local-storage/<Apple>/<appUid>/; $TMPDIR/logic-function-executor-tmpdir holds 10M.",
+      "status": "pass",
+      "note": "Disk free went from 5.9 to 5.8 GiB. The .local-storage and tmpdir files were written by the running server, not by me."
+    }
+  ],
+  "conclusions": [
+    {
+      "question": "Can the 2.44.0 scaffolder target the running :3000 instance without a browser or Docker?",
+      "claim": "Yes. Pre-seed the remote (twenty remote:add --url http://localhost:3000 --api-key ... --as pn-local), then run create-twenty-app@2.44.0 with --url http://localhost:3000. It reuses the remote and skips Docker, but still spawns `open` for the welcome page. A PATH shim for open stops that.",
+      "status": "verified",
+      "evidence": "Steps 'Neutralise browser', 'Pre-seed a CLI remote', 'Scaffold pn-hello-world' (open.log captured the URL, 'Reusing existing credentials')."
+    },
+    {
+      "question": "Does the scaffold pin SDK versions that match the server?",
+      "claim": "Yes. package.json pins twenty-sdk, twenty-client-sdk and twenty-ui to 2.44.0, and the CLI reports 2.44.0. The 2.44.0 template itself triggers a deprecation warning about the widget's vertical-list position.",
+      "status": "verified",
+      "evidence": "Steps 'Inspect the scaffold', 'CLI confirmation: remote status and read-only plan'."
+    },
+    {
+      "question": "Did the app sync and load into the Apple workspace?",
+      "claim": "Yes. CLI apply prints '✓ Synced PN Hello World (7 files)'. GraphQL lists the app (id 1854522d-...) with 1 front component, the health-check function and no objects. SQL shows the application and registration rows (local, owned by Apple), plus 1 each of front component, logic function, page layout, tab, widget, nav item and role.",
+      "status": "verified",
+      "evidence": "Steps 'CLI confirmation: one-shot sync', 'GraphQL confirmation', 'SQL confirmation'."
+    },
+    {
+      "question": "Which objects does the hello-world app define?",
+      "claim": "None. The official 2.44.0 scaffold has no defineObject or defineField. It contains defineApplication, defineApplicationRole, defineHealthCheck, defineFrontComponent, definePageLayout and defineNavigationMenuItem. The object-metadata query and SQL count for the app are empty or zero.",
+      "status": "verified",
+      "evidence": "Steps 'Inspect the scaffold', 'GraphQL confirmation' (objects: []), 'SQL confirmation' (objects 0, fields 0)."
+    },
+    {
+      "question": "Install size, time, package manager",
+      "claim": "Yarn 4.13.0 (node-modules linker) via the corepack shim. The project takes 427M, of which node_modules is 422M (187 packages). The scaffold took 60 s, remote:add 29 s, plan 6 s, apply 8 s, and the whole test about 8 minutes.",
+      "status": "verified",
+      "evidence": "Steps 'Scaffold pn-hello-world', 'Inspect the scaffold', 'CLI confirmation' steps."
+    },
+    {
+      "question": "Can an API key be obtained over GraphQL without server CLI commands?",
+      "claim": "Yes. Log in on /metadata (getLoginTokenFromCredentials, then getAuthTokensFromLoginToken), then createApiKey with roleId Admin and generateApiKeyToken. tim's Object-restricted session was allowed to bind the Admin role. These mutations do not exist on /graphql.",
+      "status": "verified",
+      "evidence": "Steps 'Log in as tim@apple.dev', 'Create API key pn-apps-key'."
+    },
+    {
+      "question": "Can the hello-world logic function be executed from the CLI or over HTTP?",
+      "claim": "Not with the API key. `twenty dev:function:exec -n health-check` fails ('Authentication failed') because executeOneLogicFunction needs a user-bound token. The same mutation with tim's session token returned SUCCESS {status:OK} in 40 ms on the LOCAL driver.",
+      "status": "partly",
+      "evidence": "Steps 'Run the hello-world logic function from the CLI', 'Get the exact server error...'."
+    },
+    {
+      "question": "Does `twenty plan` work before the first sync (docs vs source)?",
+      "claim": "Not settled. The scaffolder runs the first sync itself, so there was no unsynced state left to run plan against.",
+      "status": "not-tested",
+      "evidence": "Step 'CLI confirmation: remote status and read-only plan' ran after the first sync."
+    },
+    {
+      "question": "What is written outside the playground?",
+      "claim": "~/.twenty/config.json; two npx cache dirs (~150M each); about 76 new files in ~/.yarn/berry/cache. On the server side: app files in packages/twenty-server/.local-storage/<ws>/<appUid>, $TMPDIR/logic-function-executor-tmpdir layers, plus DB rows (application, registration, entities, apiKey).",
+      "status": "verified",
+      "evidence": "Step 'Record footprint outside the playground'."
+    }
+  ],
+  "artefacts": [
+    "Workspace app 'PN Hello World' (application id 1854522d-47af-417b-803e-1105f03f96b8, universalIdentifier d52df439-4ba6-47ac-af6a-0b0c198aae09, Apple workspace). It owns front component 2d2020ca-259f-404f-9176-da640b800679, logic function health-check 375ee729-3791-4f48-aae4-9c559db31b53, page layout ec01e4e5-f6b9-48c0-9be8-97b8e7577bde (STANDALONE_PAGE) with 1 tab and 1 widget, navigation menu item 5c4882dd-cabc-4d07-b09d-4af6f49d2ec0 and role 9c8a2037-bf19-4eda-b7bd-ae94b127fdbe. UI: the 'PN Hello World' sidebar entry (top, position -1) opens http://localhost:3002/page/ec01e4e5-f6b9-48c0-9be8-97b8e7577bde; Settings > Applications Installed tab (http://localhost:3002/settings/applications#installed); Developer tab 'My apps' (#developer). Remove with: cd /Users/bussss/projects/twenty-playground/pn-hello-world && PATH=../.pn-bin:$PATH yarn twenty app:uninstall --yes",
+    "Application registration 'PN Hello World' id 52272dc2-98bd-49b3-8b1b-3ea0131cf406 (sourceType local, owned by Apple). Uninstall leaves it in place. Remove afterwards with POST /metadata mutation { deleteApplicationRegistration(id:\"52272dc2-98bd-49b3-8b1b-3ea0131cf406\") } using the pn-apps-key or a tim session.",
+    "API key 'pn-apps-key' id ca80a1ba-c8b4-4f38-b884-a028d186450a (Admin role, expires 2026-10-10T14:53Z). Revoke with POST /metadata mutation revokeApiKey(input:{id:\"ca80a1ba-c8b4-4f38-b884-a028d186450a\"}){id} using a tim@apple.dev user session token (API keys cannot call it), or in Settings > APIs & Webhooks/MCP. Two login sessions for tim were issued (user-session rows). They expire on their own.",
+    "/Users/bussss/projects/twenty-playground/.pn-env-apps (chmod 600): TWENTY_USER_TOKEN, TWENTY_API_KEY, TWENTY_API_KEY_ID. rm -f it after revoking the key.",
+    "/Users/bussss/projects/twenty-playground/pn-hello-world (427M incl. node_modules, own .git repo, .twenty/output build). Remove with rm -rf after uninstalling.",
+    "/Users/bussss/projects/twenty-playground/.pn-bin/{open,corepack} no-op shims plus open.log and corepack.log; /Users/bussss/projects/twenty-playground/.pn-scaffold.log (chmod 600, no tokens); /Users/bussss/projects/twenty-playground/.pn-t0 (timestamp). Remove with rm -rf .pn-bin .pn-scaffold.log .pn-t0.",
+    "~/.twenty/config.json (remote pn-local with the API key, defaultRemote pn-local; did not exist before). Remove with rm -rf ~/.twenty (remote:remove alone leaves the file).",
+    "npx cache: ~/.npm/_npx/c78e399cf86fa764 (twenty-sdk 2.44.0, 147M) and ~/.npm/_npx/e6631b39351174ac (create-twenty-app 2.44.0, 150M). Remove with rm -rf those two dirs.",
+    "Yarn global cache ~/.yarn/berry/cache grew from 4507 to 4583 files. Optional cleanup: yarn cache clean --mirror (affects other projects' cache), or leave it.",
+    "Server-side files written by the running server: /Users/bussss/projects/twenty/packages/twenty-server/.local-storage/20202020-1c25-4d02-bf25-6aeccf7ea419/d52df439-4ba6-47ac-af6a-0b0c198aae09/ (8 files, ~1.6 MB; app:uninstall should remove them) and $TMPDIR/logic-function-executor-tmpdir/sdk/20202020-1c25-4d02-bf25-6aeccf7ea419-d52df439-4ba6-47ac-af6a-0b0c198aae09 (LOCAL driver layer)."
+  ],
+  "cleanup": "",
+  "problems": [
+    "create-twenty-app always spawns the OS `open` command for http://localhost:3002/page/<id> after a successful sync, and it has no flag to turn this off. Without a pre-seeded remote it opens the OAuth /authorize page instead and waits up to 120 s. I prevented both with a no-op `open` shim on PATH. Anyone repeating this without the shim will get a browser tab.",
+    "create-twenty-app runs `corepack enable` unconditionally (install.ts:74). I intercepted it with a no-op `corepack` shim on PATH to respect the no-corepack-changes rule. yarn 4.13.0 still worked through the existing shim.",
+    "The scaffolder throws away the stdout/stderr of its inner `yarn twenty dev --once`, so its sync output is invisible. Run `yarn twenty plan` / `apply` afterwards to see what the CLI did.",
+    "`yarn twenty dev:function:exec` cannot work with an API-key remote: executeOneLogicFunction requires a user-bound token (server: 'This endpoint requires a token bound to a user workspace.'), and the CLI misreports this as 'Authentication failed on remote'. To run it from the CLI, add an OAuth remote, which needs a browser (not done here). Over HTTP, call the mutation with a user session token from getLoginTokenFromCredentials/getAuthTokensFromLoginToken on /metadata.",
+    "Login and API-key mutations exist only on /metadata, not /graphql. In findOneApplication, the Application type has no sourceType field and ApplicationRegistrationSummary has no name field. findOneApplication returned defaultLogicFunctionRole null although core.application.defaultRoleId is set.",
+    "The 2.44.0 scaffold defines no objects or fields, so 'confirm the object(s) it defines' comes down to confirming zero. Exercising objects needs extra entity files, as in the research's pn-add-entities plan, which I did not run.",
+    "The unresolved docs-vs-source question about `twenty plan` on a never-synced app could not be tested on this path, because the scaffolder syncs before the user can run plan. Use the research's 'quiet alternative' (copy the template plus the published yarn.lock) to settle it.",
+    "The scaffolder's git commit used the machine's global git identity (the global git identity). The template's vitest.config.ts carries the public SDK DEV_API_KEY as a default, which this instance rejects ('Token invalid.').",
+    "The app's sync makes the running server write files inside the repo at packages/twenty-server/.local-storage (default STORAGE_LOCAL_PATH). That is a server effect inside /Users/bussss/projects/twenty, not something I wrote, but a reader should know it happens.",
+    "Disk: free space dropped from 5.9 to 5.8 GiB, with about 300M in npx caches and 422M in node_modules. The dentistinn containers and ports were not touched, and no long-running process of mine remains."
+  ]
+}

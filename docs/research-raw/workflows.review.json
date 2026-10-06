@@ -1,0 +1,227 @@
+{
+  "area": "workflows",
+  "verdicts": [
+    {
+      "id": "F01",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "WorkflowActionType has exactly the 20 listed values and the factory maps all of them. baseTriggerSchema and WorkflowTriggerType list DATABASE_EVENT, MANUAL, CRON and WEBHOOK. No action type is an approval step."
+    },
+    {
+      "id": "F02",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "FormWorkflowAction calls recordFormRequest, which writes a request_form tool part with toolCallId = stepId and sets pendingQuestionMessageId, then returns { pendingEvent: true }. processStepExecutionResult sets StepStatus.PENDING and shouldProcessNextSteps false. WorkflowRunStatus has no WAITING value."
+    },
+    {
+      "id": "F03",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran the SQL and got '#3 - Approve discount|RUNNING|PENDING|51e301d4-...|t', '#1 ...|COMPLETED|SUCCESS|...|f' and '#2 ...|STOPPED|FAILED|...|f'. Each run's flow is a MANUAL trigger followed by a FORM step."
+    },
+    {
+      "id": "F04",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "The resolver guard sets apiKey: false and allows user sessions, plus OAuth/application tokens that carry a user. For run threads, assertCanAnswerForWorkflowRun checks the WORKFLOWS flag and that the run is readable through a permission-aware repository. submitFormStep carries a deprecationReason. The front end sends toolCallId: stepId."
+    },
+    {
+      "id": "F05",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Unauthenticated introspection, re-run here, lists answerToolCall, submitFormStep (isDeprecated true, same reason), runWorkflowVersion, activateWorkflowVersion, stopWorkflowRun, retryWorkflowRun and updateWorkflowRunStep. AnswerToolCallInput is threadId UUID!, toolCallId String!, response JSON!, modelId String."
+    },
+    {
+      "id": "F06",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "The output schema is z.record(z.unknown()), refined only against unknown field names. completeFormStep stores enrichFormStepResponse output as SUCCESS, and RECORD values are re-read as full records. getWorkflowRunContext exposes results keyed by stepId."
+    },
+    {
+      "id": "F07",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Stuck RUNNING runs are only flagged, and runs with PENDING steps are skipped. stopWorkflowRun on a PENDING-only run calls endWorkflowRun(STOPPED), and markRunningStepsAsFailed turns PENDING into FAILED. retry only acts on FAILED runs. updateWorkflowRunStep has only the WORKFLOWS guard, loads the run with a permission-bypassing repository, and refuses only COMPLETED/FAILED runs, so even STOPPED runs are accepted."
+    },
+    {
+      "id": "F08",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "workflow-actions.mdx (Form section) has the 'Forms are designed for manual triggers only' warning, the 2026 notification-center note, the side-panel fill instructions and 'The fields cannot be made mandatory.' runWorkflowVersion opens the run in the side panel, and the run node detail shows the FORM filler editable while PENDING."
+    },
+    {
+      "id": "F09",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "workflowFormFieldSchema allows TEXT, NUMBER, DATE, SELECT, MULTI_SELECT and RECORD. The select settings offer only 'Existing Field'. The label and placeholder inputs have no variable picker, the filler renders action.settings.input as stored, and the server passes step.settings.input unresolved."
+    },
+    {
+      "id": "F10",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "execute_tool calls toolRegistry.resolveAndExecute directly, and dispatch runs create_one/update_one through the record services. No needsApproval or approval handling exists on the server. AgentChatPendingToolCall has only questions, emailApproval and form kinds."
+    },
+    {
+      "id": "F11",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "PAUSING_TOOLS maps exactly ask_questions, propose_email and request_form. On 'send' or 'saveDraft', propose_email runs send_email or draft_email through context.executeTool as the answering user. One condition is missing: in chat, propose_email is offered only when send_email is in the caller's tool catalog (chat-execution.service.ts:314)."
+    },
+    {
+      "id": "F12",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "isAskingQuestionsAllowed = canAskQuestions === true gates pausingTools. A paused execution returns pendingEvent. For a non-form step, resumeAnsweredStep enqueues RunWorkflowJob with stepToResume, and the job claims the PENDING step and resumes from the thread's stored model messages."
+    },
+    {
+      "id": "F13",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "The source has the 'No role means no registry tools' comment. Preloaded workflow-agent tools use requireExplicitObjectGrants: true, so a read-only grant yields no write tools. A JSON responseFormat yields a structured result. Results are addressable as {{stepId.field}}. The chain was not executed, as the finding says."
+    },
+    {
+      "id": "F14",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "create_complete_workflow activates only when parameters.activate is truthy, and the describe text says default false. activate_workflow_version is in the same WORKFLOW-category provider, which is available whenever the role has the WORKFLOWS flag."
+    },
+    {
+      "id": "F15",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "FieldActorSource has the 10 listed values and no MCP (same as the local company_createdBySource_enum). Chat builds an AGENT actor with the member's name. MCP builds AGENT with the API key name or member name. Workflow steps use the initiator when acting on behalf of a user, else WORKFLOW 'Workflow'. The createdBy pre-hook keeps a provided createdBy that has a name."
+    },
+    {
+      "id": "F16",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "injectActorToRecord always overwrites updatedBy with the actor built from the auth context, which is MANUAL for a user context, on both create and update hooks. Common query runners execute pre-query hooks. UpdateRecordService.execute never destructures updatedBy."
+    },
+    {
+      "id": "F17",
+      "verdict": "imprecise",
+      "correctedClaim": "timelineActivity rows store the activity type snapshot, a diff-only properties object (empty on create), happensAt, the target and the event user's workspaceMemberId. The row's own createdBy columns are a constant MANUAL/'System', so the acting source (AGENT, WORKFLOW, API) is not captured.",
+      "correctedRefs": [
+        "packages/twenty-server/src/modules/timeline/services/timeline-activity.service.ts:52",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT \\\"createdBySource\\\", \\\"createdByName\\\", count(*) FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"timelineActivity\\\" GROUP BY 1,2;\""
+      ],
+      "reason": "The table does have createdBySource/createdByName/updatedBy* columns. Locally all 14377 rows hold MANUAL|System, so 'no actor source is stored' is literally wrong, although no meaningful actor is recorded. The rest checks out."
+    },
+    {
+      "id": "F18",
+      "verdict": "imprecise",
+      "correctedClaim": "Event logs are ClickHouse tables read through eventLogs (SECURITY permission; users, API keys or apps). objectEvent and applicationLog need no entitlement. The other tables need a valid enterprise key plus AUDIT_LOGS, and that entitlement check passes automatically when billing is disabled.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.service.ts:176",
+        "packages/twenty-server/src/engine/core-modules/billing/services/billing.service.ts:76",
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.resolver.ts:52"
+      ],
+      "reason": "BillingService.hasEntitlement returns true when billing is disabled. So on self-hosted without billing (as here), only ENTERPRISE_KEY validity plus CLICKHOUSE_URL gate the AUDIT_LOGS tables. The resolver also accepts API keys, OAuth clients and applications."
+    },
+    {
+      "id": "F19",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran the query: 'Local Setup Test Co|MANUAL|Tim Apple|MANUAL|Tim Apple|recordCreated:true:{}'. appToken holds only REFRESH_TOKEN rows (no enterprise validity token). ENTERPRISE_KEY and CLICKHOUSE_URL are commented out in .env, and core.keyValuePair has no ENTERPRISE or CLICKHOUSE key."
+    },
+    {
+      "id": "F20",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Tool UI parts map to toolName, toolCallId, toolInput, toolOutput and state. The workflow step log holds modelId, usage, cost and toolCalls truncated to a byte budget, and a conversation is recorded only when paused or resumed. McpToolExecutorService only records metrics counters and histograms, with no persistence."
+    },
+    {
+      "id": "F21",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "The constants are 14 days and 1000 runs. A raw DELETE of COMPLETED/FAILED runs runs on cron '0 */3 * * *', registered in cron:register:all. The live FK agentChatThread.workflowRunId is ON DELETE CASCADE, and messages and turns cascade from the thread. MAX_STEP_LOG_BYTES = 256_000, and a larger log is dropped. eventLogRetentionDays defaults to 90."
+    },
+    {
+      "id": "F22",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "answer() adds a USER message with senderUserWorkspaceId (senderWorkspaceMemberId is derived from it on insert) and writes the tool output status 'answered' with values. completeFormStep stores only the enriched response. Downstream writes are stamped with the run initiator or Workflow, never the approver."
+    }
+  ],
+  "missed": [
+    {
+      "subQuestion": "Q4b",
+      "claim": "After a form is approved, downstream record steps run with the run initiator's role, or for automated runs with the standard application role (admin fallback, else permission bypass). The approver's permissions never gate the write.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-executor/services/workflow-execution-context.service.ts:40",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/services/workflow-execution-context.service.ts:86"
+      ],
+      "evidenceQuote": "workflowRun.createdBy.source === FieldActorSource.MANUAL &&"
+    },
+    {
+      "subQuestion": "Q4a",
+      "claim": "RECORD answers in a form are expanded into full records under a system auth context with permission checks bypassed, regardless of what the answering user can read.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-builder/workflow-version-step/workflow-version-step-operations.workspace-service.ts:721",
+        "packages/twenty-server/src/modules/workflow/workflow-builder/workflow-version-step/workflow-version-step-operations.workspace-service.ts:759"
+      ],
+      "evidenceQuote": "{ shouldBypassPermissionChecks: true },"
+    },
+    {
+      "subQuestion": "Q4a",
+      "claim": "updateWorkflowRunStep loads the run with a system context and bypassed permissions, so unlike answerToolCall it does not check that the caller can read the run. It refuses only COMPLETED or FAILED runs.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run/workflow-run.workspace-service.ts:600",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run/workflow-run.workspace-service.ts:571"
+      ],
+      "evidenceQuote": "'Cannot update steps of a completed or failed workflow run',"
+    },
+    {
+      "subQuestion": "Q4c",
+      "claim": "Removing a workspace member deletes their chat threads, including all tool-call parts, through a cascade on agentChatThread.workspaceMemberId. agentMessage.senderWorkspaceMemberId is set to NULL, so the approver link also weakens.",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT conrelid::regclass, pg_get_constraintdef(oid) FROM pg_constraint WHERE contype='f' AND connamespace='workspace_1wgvd1injqtife6y4rvfbu3h5'::regnamespace AND conrelid::regclass::text ILIKE '%agent%';\""
+      ],
+      "evidenceQuote": "agentChatThread ... FOREIGN KEY (\"workspaceMemberId\") REFERENCES ...\"workspaceMember\"(id) ON DELETE CASCADE"
+    },
+    {
+      "subQuestion": "Q4c",
+      "claim": "The event pipeline's sinks come from the env-only EVENT_SINKS (default ['clickhouse']). A 'console' sink is always available and writes events to server logs without ClickHouse, although the eventLogs query still requires ClickHouse.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1357",
+        "packages/twenty-server/src/engine/core-modules/event-logs/ingest/event-sink-availability.ts:14"
+      ],
+      "evidenceQuote": "EVENT_SINKS: string[] = ['clickhouse'];"
+    },
+    {
+      "subQuestion": "Q4b",
+      "claim": "In AI chat, propose_email is offered only when send_email is in the caller's tool catalog, while ask_questions and request_form are always offered.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:314"
+      ],
+      "evidenceQuote": "// Proposing an email only helps someone who could then send it."
+    }
+  ],
+  "testPlanIssues": []
+}
