@@ -15,7 +15,7 @@ import { PermissionsException } from 'src/engine/metadata-modules/permissions/pe
 import { WorkspaceOrmManager } from 'src/engine/twenty-orm/workspace-orm.manager';
 import { buildSystemAuthContext } from 'src/engine/twenty-orm/utils/build-system-auth-context.util';
 import { AgentHistoryRepository } from 'src/engine/metadata-modules/ai/ai-history/repositories/agent-history-repository';
-import { readToolCallWorkflowStep } from 'src/engine/metadata-modules/ai/ai-chat/utils/read-tool-call-workflow-step.util';
+import { readToolCallWorkflowStep } from 'src/engine/metadata-modules/ai/ai-history/utils/read-tool-call-workflow-step.util';
 import { InjectAgentHistoryRepository } from 'src/engine/metadata-modules/ai/ai-history/repositories/inject-agent-history-repository.decorator';
 import { type AgentChatThreadWorkspaceEntity } from 'src/engine/metadata-modules/ai/ai-history/standard-objects/agent-chat-thread.workspace-entity';
 import { type AgentMessagePartWorkspaceEntity } from 'src/engine/metadata-modules/ai/ai-history/standard-objects/agent-message-part.workspace-entity';
@@ -32,10 +32,14 @@ import { isWorkflowAiAgentAction } from 'src/modules/workflow/workflow-executor/
 import { isWorkflowSendChatMessageAction } from 'src/modules/workflow/workflow-executor/workflow-actions/send-chat-message/guards/is-workflow-send-chat-message-action.guard';
 import { type WorkflowAction } from 'src/modules/workflow/workflow-executor/workflow-actions/types/workflow-action.type';
 import { type WorkflowTrigger } from 'src/modules/workflow/workflow-trigger/types/workflow-trigger.type';
+import { WorkflowStepWaitWorkspaceService } from 'src/modules/workflow/workflow-wait/services/workflow-step-wait.workspace-service';
 import {
   WorkflowRunException,
   WorkflowRunExceptionCode,
 } from 'src/modules/workflow/workflow-runner/exceptions/workflow-run.exception';
+import { AgentTurnStatus } from 'src/engine/metadata-modules/ai/ai-history/enums/agent-turn-status.enum';
+import { AgentChatThreadRecordEventService } from 'src/engine/metadata-modules/ai/ai-chat/services/agent-chat-thread-record-event.service';
+import { AgentTurnRecorderService } from 'src/engine/metadata-modules/ai/ai-history/services/agent-turn-recorder.service';
 
 @Injectable()
 export class WorkflowRunWorkspaceService {
@@ -50,6 +54,9 @@ export class WorkflowRunWorkspaceService {
     private readonly threadRepository: AgentHistoryRepository<AgentChatThreadWorkspaceEntity>,
     @InjectAgentHistoryRepository('agentMessagePart')
     private readonly messagePartRepository: AgentHistoryRepository<AgentMessagePartWorkspaceEntity>,
+    private readonly workflowStepWaitWorkspaceService: WorkflowStepWaitWorkspaceService,
+    private readonly turnRecorderService: AgentTurnRecorderService,
+    private readonly threadRecordEventService: AgentChatThreadRecordEventService,
   ) {}
 
   async createCoreWorkflowRun({
@@ -210,6 +217,15 @@ export class WorkflowRunWorkspaceService {
 
     await this.updateWorkflowRun({ workflowRunId, workspaceId, partialUpdate });
 
+    // the run is already over and its waits find nothing to resume, so a failure must not stop the cleanup below
+    await this.workflowStepWaitWorkspaceService
+      .cancelRunWaits({ workspaceId, workflowRunId })
+      .catch((error: unknown) => {
+        this.logger.error(
+          `Failed to cancel the waits of workflow run ${workflowRunId} in workspace ${workspaceId}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+
     const stepThreadIds = Object.values(
       workflowRunToUpdate.state?.stepInfos ?? {},
     )
@@ -278,6 +294,7 @@ export class WorkflowRunWorkspaceService {
             result: stepInfo?.result,
             error: stepInfo?.error,
             status: stepInfo.status,
+            wait: stepInfo?.wait,
           },
         },
       },
@@ -464,7 +481,8 @@ export class WorkflowRunWorkspaceService {
           ...workflowRunToUpdate.state,
           stepInfos: {
             ...workflowRunToUpdate.state?.stepInfos,
-            [stepId]: { ...currentStepInfo, ...stepInfo },
+            // the step leaves PENDING, so it no longer waits
+            [stepId]: { ...currentStepInfo, wait: undefined, ...stepInfo },
           },
         },
       },
@@ -741,36 +759,21 @@ export class WorkflowRunWorkspaceService {
     workspaceId: string;
     stepThreadIds: string[];
   }): Promise<void> {
-    // An answer holding a conversation's claim closes its calls itself once it finds the run over.
-    // A step can also wait in a member's inbox, whose conversation is theirs, not the run's
-    const [runThreads, inboxThreads] = await Promise.all([
-      this.threadRepository.find(workspaceId, {
-        where: {
-          workflowRunId,
-          pendingQuestionMessageId: Not(IsNull()),
-          activeStreamId: IsNull(),
-        },
-        select: ['id', 'pendingQuestionMessageId'],
-      }),
-      this.threadRepository.find(workspaceId, {
-        where: {
-          id: In(stepThreadIds),
-          workflowRunId: IsNull(),
-          pendingQuestionMessageId: Not(IsNull()),
-          activeStreamId: IsNull(),
-        },
-        select: ['id', 'pendingQuestionMessageId'],
-      }),
-    ]);
+    // An answer holding a conversation's claim closes its calls itself once it finds the run over
+    const stepThreads = await this.threadRepository.find(workspaceId, {
+      where: {
+        id: In(stepThreadIds),
+        pendingQuestionMessageId: Not(IsNull()),
+        activeStreamId: IsNull(),
+      },
+      select: ['id', 'pendingQuestionMessageId'],
+    });
 
-    const waitingThreads = [
-      ...runThreads,
-      ...(await this.filterThreadsWaitingOnRun({
-        threads: inboxThreads,
-        workflowRunId,
-        workspaceId,
-      })),
-    ];
+    const waitingThreads = await this.filterThreadsWaitingOnRun({
+      threads: stepThreads,
+      workflowRunId,
+      workspaceId,
+    });
 
     for (const { id, pendingQuestionMessageId } of waitingThreads) {
       if (!isDefined(pendingQuestionMessageId)) {
@@ -787,10 +790,23 @@ export class WorkflowRunWorkspaceService {
         continue;
       }
 
+      await this.threadRecordEventService.emitPendingQuestionCleared({
+        workspaceId,
+        threadId: id,
+        messageId: pendingQuestionMessageId,
+      });
+
+      // the question is already cleared, so its calls must close before anything else can fail
       await closeOpenToolParts({
         messagePartRepository: this.messagePartRepository,
         messageId: pendingQuestionMessageId,
         workspaceId,
+      });
+
+      await this.turnRecorderService.endWaitingTurn({
+        workspaceId,
+        messageId: pendingQuestionMessageId,
+        status: AgentTurnStatus.CANCELLED,
       });
     }
   }
