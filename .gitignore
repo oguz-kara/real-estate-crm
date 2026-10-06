@@ -70,3 +70,4 @@ screenshots/
 /.diag*.mjs
 /.compare*.mjs
 /.narrow*.mjs
+.superpowers/
