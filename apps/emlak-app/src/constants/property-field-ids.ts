@@ -39,8 +39,17 @@ export const PROPERTY_FIELD_IDS = {
   inSite: 'b0523794-ffa9-4ba8-9807-07a880fa1374',
   siteName: 'e6cc0335-58e3-40a1-98f1-f081c1e65dde',
   usageStatus: '4ca31191-0e76-49fc-a7d2-c647cded8e5e',
+  kitchenType: '2368e5a1-6dfa-4f68-a1d5-183b29198763',
+  buildingAgeYears: '117947cb-c8e0-41f2-ab53-7c3c54976e1d',
+  buildingCondition: '06a898f1-9a41-4eba-ac1b-7ad232a798e5',
+  immovableNumber: 'd558e0d1-cd9a-4234-affa-04f1ac06020c',
+  deposit: '6983d339-4dc7-4cae-ac61-82e05f693b0d',
   // isyeri
   transferFee: '25401b34-c024-4a76-8bdd-5807468f0540',
+  openAreaSqm: '6f6054eb-0fdc-47da-852a-388d2e8d363f',
+  closedAreaSqm: '8c8aee40-0822-4a9f-83fb-573e11213915',
+  sectionRoomCount: '471e2e46-c56f-4cd1-8b37-b2a36188cc19',
+  bedCount: 'b1d72d89-3c6b-4ef2-94a5-c4d7f0dcccd1',
   // arsa
   zoningStatus: 'a0c5c181-74b2-4bfe-91ae-f452c464ce40',
   blockNo: '536ad4a4-6315-4a46-995e-153559345f8f',
@@ -49,6 +58,8 @@ export const PROPERTY_FIELD_IDS = {
   gabari: '5d2c92fd-1540-4725-b573-4a4869da8ae3',
   pricePerSqm: '2cbdd642-ed99-4d36-92db-38639986ba51',
   // amenities
+  facade: '558b4199-5624-498e-bd94-a62b27a45612',
+  businessFeatures: '9c96e501-d926-4a8c-a9dd-6a17bbc9163e',
   interiorFeatures: '604a8d8f-7a47-4269-90da-93bd845e7b9f',
   exteriorFeatures: '9d7c8cb1-72f5-4aae-926c-12ebe30227d2',
   neighborhoodFeatures: 'aafad305-6758-4190-a805-983b22beecb9',

@@ -7,10 +7,13 @@ export const parseBoolean = (
   if (raw === null || raw === undefined) {
     return null;
   }
-  if (TRUE_VALUES.has(raw)) {
+
+  const trimmed = raw.trim();
+
+  if (TRUE_VALUES.has(trimmed)) {
     return true;
   }
-  if (FALSE_VALUES.has(raw)) {
+  if (FALSE_VALUES.has(trimmed)) {
     return false;
   }
 

@@ -1,4 +1,7 @@
-import { AMENITY_LABEL_TO_FIELD_VALUE } from 'src/constants/property-options';
+import {
+  AMENITY_LABEL_ALIASES,
+  AMENITY_LABEL_TO_FIELD_VALUE,
+} from 'src/constants/property-options';
 import { STRUCTURAL_FEATURE_KEYS } from 'src/import/structural-feature-keys';
 import { type ImportIssue } from 'src/import/raw-listing.type';
 
@@ -13,8 +16,12 @@ export const mapFeatures = (
   const fields: Record<string, string[]> = {};
   const issues: ImportIssue[] = [];
 
-  for (const [key, value] of Object.entries(ozellikler)) {
-    if (value === null || STRUCTURAL_FEATURE_KEYS.has(key)) {
+  for (const [rawKey, rawValue] of Object.entries(ozellikler)) {
+    const trimmedKey = rawKey.trim();
+    const key = AMENITY_LABEL_ALIASES[trimmedKey] ?? trimmedKey;
+    const value = rawValue === null ? null : rawValue.trim();
+
+    if (value === null || value === '' || STRUCTURAL_FEATURE_KEYS.has(key)) {
       continue;
     }
 
@@ -30,7 +37,7 @@ export const mapFeatures = (
       continue;
     }
 
-    if (value !== 'Evet') {
+    if (value !== 'Evet' && value !== 'Var') {
       issues.push({
         externalId: null,
         field: key,
@@ -41,7 +48,11 @@ export const mapFeatures = (
     }
 
     const [fieldName, optionValue] = amenity;
-    fields[fieldName] = [...(fields[fieldName] ?? []), optionValue];
+    const existing = fields[fieldName] ?? [];
+    // spelling variants of the same amenity must not duplicate the value
+    if (!existing.includes(optionValue)) {
+      fields[fieldName] = [...existing, optionValue];
+    }
   }
 
   return { fields, issues };

@@ -20,6 +20,7 @@ const IMPORT_OWNED_CURRENCY_FIELDS = [
   'dues',
   'transferFee',
   'pricePerSqm',
+  'deposit',
 ] as const;
 
 const IMPORT_OWNED_NULLABLE_FIELDS = [
@@ -52,11 +53,21 @@ const IMPORT_OWNED_NULLABLE_FIELDS = [
   'inSite',
   'siteName',
   'usageStatus',
+  'kitchenType',
+  'buildingAgeYears',
+  'buildingCondition',
+  'immovableNumber',
+  'openAreaSqm',
+  'closedAreaSqm',
+  'sectionRoomCount',
+  'bedCount',
   'zoningStatus',
   'blockNo',
   'parcelNo',
   'kaks',
   'gabari',
+  'facade',
+  'businessFeatures',
   'interiorFeatures',
   'exteriorFeatures',
   'neighborhoodFeatures',
@@ -119,7 +130,13 @@ export const normalizeListing = (raw: RawListing): NormalizedListing => {
   issues.push(...structural.issues);
 
   const amenities = mapFeatures(ozellikler);
-  Object.assign(record, amenities.fields);
+  for (const [fieldName, values] of Object.entries(amenities.fields)) {
+    const existing = record[fieldName];
+    // the structural mapper may have seeded the same multi-select
+    record[fieldName] = Array.isArray(existing)
+      ? [...new Set([...existing, ...values])]
+      : values;
+  }
   issues.push(...amenities.issues);
 
   if (raw['Aktif Görsel Listesi']) {

@@ -171,8 +171,17 @@ export default defineObject({
     booleanField('inSite', 'Site İçerisinde', 'IconBuildingCommunity'),
     textField('siteName', 'Site Adı', 'IconSignature'),
     selectField('usageStatus', 'Kullanım Durumu', 'IconKey'),
+    selectField('kitchenType', 'Mutfak', 'IconToolsKitchen2'),
+    intField('buildingAgeYears', 'Bina Yaşı (Yıl)', 'IconCalendarStats'),
+    selectField('buildingCondition', 'Yapının Durumu', 'IconHammer'),
+    textField('immovableNumber', 'Taşınmaz Numarası', 'IconId'),
+    currencyField('deposit', 'Depozito', 'IconCash'),
     // isyeri
     currencyField('transferFee', 'Devren Bedeli', 'IconTransfer'),
+    intField('openAreaSqm', 'Açık Alan m²', 'IconSun'),
+    intField('closedAreaSqm', 'Kapalı Alan m²', 'IconBox'),
+    intField('sectionRoomCount', 'Bölüm & Oda Sayısı', 'IconDoorEnter'),
+    intField('bedCount', 'Yatak Sayısı', 'IconBed'),
     // arsa
     selectField('zoningStatus', 'İmar Durumu', 'IconMap'),
     textField('blockNo', 'Ada No', 'IconGrid4x4'),
@@ -181,6 +190,8 @@ export default defineObject({
     textField('gabari', 'Gabari', 'IconArrowAutofitHeight'),
     currencyField('pricePerSqm', 'm² Fiyatı', 'IconCalculator'),
     // amenities
+    multiSelectField('facade', 'Cephe', 'IconCompass'),
+    multiSelectField('businessFeatures', 'İşyeri & Tesis Özellikleri', 'IconBriefcase'),
     multiSelectField('interiorFeatures', 'İç Özellikler', 'IconArmchair'),
     multiSelectField('exteriorFeatures', 'Dış Özellikler', 'IconBuildingSkyscraper'),
     multiSelectField('neighborhoodFeatures', 'Muhit', 'IconMapSearch'),

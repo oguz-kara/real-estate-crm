@@ -16,25 +16,41 @@ export type UpsertOptions = {
   apiKey: string;
 };
 
+// the server rate-limits API keys (100 requests / 60s); an import is 2
+// requests per record, so larger files must wait the window out
+const RATE_LIMIT_BACKOFF_SECONDS = [5, 15, 30, 65];
+
+const sleepSeconds = (seconds: number) =>
+  new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+
 const requestJson = async (
   url: string,
   options: UpsertOptions,
   init?: RequestInit,
 ): Promise<{ ok: boolean; status: number; body: Record<string, unknown> }> => {
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      authorization: `Bearer ${options.apiKey}`,
-      'content-type': 'application/json',
-      ...init?.headers,
-    },
-  });
-  const body = (await response.json().catch(() => ({}))) as Record<
-    string,
-    unknown
-  >;
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        authorization: `Bearer ${options.apiKey}`,
+        'content-type': 'application/json',
+        ...init?.headers,
+      },
+    });
+    const body = (await response.json().catch(() => ({}))) as Record<
+      string,
+      unknown
+    >;
 
-  return { ok: response.ok, status: response.status, body };
+    if (response.status === 429 && attempt < RATE_LIMIT_BACKOFF_SECONDS.length) {
+      const waitSeconds = RATE_LIMIT_BACKOFF_SECONDS[attempt];
+      console.log(`rate limited, waiting ${waitSeconds}s...`);
+      await sleepSeconds(waitSeconds);
+      continue;
+    }
+
+    return { ok: response.ok, status: response.status, body };
+  }
 };
 
 const findExistingId = async (

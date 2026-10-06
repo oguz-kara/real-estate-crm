@@ -10,6 +10,11 @@ export type MappedCategories = {
 
 const IGNORED_TOKENS = new Set(['Emlak']);
 
+// raw export spellings that differ from our canonical labels
+const TOKEN_ALIASES: Record<string, string> = {
+  'İş Yeri': 'İşyeri',
+};
+
 export const mapCategories = (
   raw: string | null | undefined,
 ): MappedCategories => {
@@ -23,6 +28,7 @@ export const mapCategories = (
   const tokens = (raw ?? '')
     .split(',')
     .map((token) => token.trim())
+    .map((token) => TOKEN_ALIASES[token] ?? token)
     .filter((token) => token.length > 0 && !IGNORED_TOKENS.has(token));
 
   for (const token of tokens) {
