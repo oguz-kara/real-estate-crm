@@ -4,7 +4,7 @@
 // raw Turkish strings; values are stable SCREAMING_SNAKE identifiers.
 import {
   type LocalizedText,
-  resolveLabel,
+
   trLabel,
 } from 'src/constants/app-locale';
 
@@ -39,7 +39,7 @@ type OptionEntry = readonly [
 const buildOptions = (entries: ReadonlyArray<OptionEntry>): readonly SelectOption[] =>
   entries.map(([value, label, color], index) => ({
     value,
-    label: resolveLabel(label),
+    label: trLabel(label),
     position: index,
     color: color ?? OPTION_COLOR_PALETTE[index % OPTION_COLOR_PALETTE.length],
   }));

@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'vitest';
 
-import { resolveLabel, trLabel } from 'src/constants/app-locale';
+import {
+  METADATA_LABEL_PAIRS,
+  metadataLabel,
+  resolveLabel,
+  trLabel,
+} from 'src/constants/app-locale';
 
 describe('resolveLabel', () => {
   test('plain string resolves to itself in every locale', () => {
@@ -16,6 +21,24 @@ describe('resolveLabel', () => {
 
   test('missing en falls back to tr so partial translation never breaks the manifest', () => {
     expect(resolveLabel({ tr: 'Isıtma' }, 'en')).toBe('Isıtma');
+  });
+});
+
+describe('metadataLabel', () => {
+  // catalog keys ARE the manifest source strings, so metadata sources must
+  // be English; the tr half is recorded for the catalog-fill script
+  test('returns the English source and records the en→tr pair', () => {
+    expect(metadataLabel({ tr: 'Portföy', en: 'Property' })).toBe('Property');
+    expect(METADATA_LABEL_PAIRS.get('Property')).toBe('Portföy');
+  });
+
+  test('falls back to tr when en is missing, without recording a pair', () => {
+    expect(metadataLabel({ tr: 'Sadece Türkçe' })).toBe('Sadece Türkçe');
+    expect(METADATA_LABEL_PAIRS.has('Sadece Türkçe')).toBe(false);
+  });
+
+  test('plain strings pass through untouched', () => {
+    expect(metadataLabel('Name')).toBe('Name');
   });
 });
 

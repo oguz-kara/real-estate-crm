@@ -5,7 +5,7 @@ import {
   ViewType,
 } from 'twenty-sdk/define';
 
-import { resolveLabel } from 'src/constants/app-locale';
+import { metadataLabel } from 'src/constants/app-locale';
 import {
   PERSON_FOLLOW_UP_FIELD_IDS,
   TAKIP_BEKLEYENLER_VIEW_ID,
@@ -13,7 +13,7 @@ import {
 
 export default defineView({
   universalIdentifier: TAKIP_BEKLEYENLER_VIEW_ID,
-  name: resolveLabel({ tr: 'Takip Bekleyenler', en: 'Awaiting Follow-up' }),
+  name: metadataLabel({ tr: 'Takip Bekleyenler', en: 'Awaiting Follow-up' }),
   objectUniversalIdentifier:
     STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.person.universalIdentifier,
   type: ViewType.TABLE,

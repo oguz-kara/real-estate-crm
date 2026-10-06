@@ -11,14 +11,16 @@ import {
 } from 'src/fields/owner-on-property.field';
 import { PROPERTY_UNIVERSAL_IDENTIFIER } from 'src/objects/property.object';
 
+import { metadataLabel } from 'src/constants/app-locale';
+
 export default defineField({
   universalIdentifier: OWNED_PROPERTIES_FIELD_ID,
   objectUniversalIdentifier:
     STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.person.universalIdentifier,
   type: FieldType.RELATION,
   name: 'ownedProperties',
-  label: 'Portföyleri',
-  description: 'Kişinin mal sahibi olduğu portföyler',
+  label: metadataLabel({ tr: 'Portföyleri', en: 'Owned Properties' }),
+  description: metadataLabel({ tr: 'Kişinin mal sahibi olduğu portföyler', en: 'Properties this person owns' }),
   icon: 'IconBuildingCommunity',
   relationTargetObjectMetadataUniversalIdentifier: PROPERTY_UNIVERSAL_IDENTIFIER,
   relationTargetFieldMetadataUniversalIdentifier: OWNER_FIELD_ID,

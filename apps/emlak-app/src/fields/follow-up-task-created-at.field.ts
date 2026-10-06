@@ -4,7 +4,7 @@ import {
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
 } from 'twenty-sdk/define';
 
-import { resolveLabel } from 'src/constants/app-locale';
+import { metadataLabel } from 'src/constants/app-locale';
 import { PERSON_FOLLOW_UP_FIELD_IDS } from 'src/constants/person-follow-up-field-ids';
 
 export default defineField({
@@ -13,8 +13,8 @@ export default defineField({
     STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.person.universalIdentifier,
   type: FieldType.DATE_TIME,
   name: 'followUpTaskCreatedAt',
-  label: resolveLabel({ tr: 'Takip Görevi Tarihi', en: 'Follow-up Task Created' }),
-  description: resolveLabel({
+  label: metadataLabel({ tr: 'Takip Görevi Tarihi', en: 'Follow-up Task Created' }),
+  description: metadataLabel({
     tr: 'Tarama içi tekrar önleme damgası',
     en: 'Internal dedupe marker for lapse tasks',
   }),

@@ -8,6 +8,8 @@ import {
 
 import { PROPERTY_UNIVERSAL_IDENTIFIER } from 'src/objects/property.object';
 
+import { metadataLabel } from 'src/constants/app-locale';
+
 export const OWNER_FIELD_ID = 'a3e0a4dd-eb19-41c8-9a77-eb035180b55d';
 export const OWNED_PROPERTIES_FIELD_ID = 'bfdbb77f-9efe-42dd-a0b6-b7f10bdf84a5';
 
@@ -16,8 +18,8 @@ export default defineField({
   objectUniversalIdentifier: PROPERTY_UNIVERSAL_IDENTIFIER,
   type: FieldType.RELATION,
   name: 'owner',
-  label: 'Mal Sahibi',
-  description: 'Portföyün mal sahibi',
+  label: metadataLabel({ tr: 'Mal Sahibi', en: 'Owner' }),
+  description: metadataLabel({ tr: 'Portföyün mal sahibi', en: 'The owner of this property' }),
   icon: 'IconUser',
   isNullable: true,
   relationTargetObjectMetadataUniversalIdentifier:

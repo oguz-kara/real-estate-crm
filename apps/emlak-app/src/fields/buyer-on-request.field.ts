@@ -6,7 +6,7 @@ import {
   STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS,
 } from 'twenty-sdk/define';
 
-import { resolveLabel } from 'src/constants/app-locale';
+import { metadataLabel } from 'src/constants/app-locale';
 import {
   BUYER_REQUEST_FIELD_IDS,
   BUYER_REQUEST_UNIVERSAL_IDENTIFIER,
@@ -18,7 +18,7 @@ export default defineField({
   objectUniversalIdentifier: BUYER_REQUEST_UNIVERSAL_IDENTIFIER,
   type: FieldType.RELATION,
   name: 'buyer',
-  label: resolveLabel({ tr: 'Alıcı', en: 'Buyer' }),
+  label: metadataLabel({ tr: 'Alıcı', en: 'Buyer' }),
   icon: 'IconUser',
   isNullable: true,
   relationTargetObjectMetadataUniversalIdentifier:

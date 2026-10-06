@@ -5,7 +5,7 @@ import {
   ViewType,
 } from 'twenty-sdk/define';
 
-import { resolveLabel } from 'src/constants/app-locale';
+import { metadataLabel } from 'src/constants/app-locale';
 import {
   PROPERTY_MATCH_FIELD_IDS,
   PROPERTY_MATCH_UNIVERSAL_IDENTIFIER,
@@ -14,7 +14,7 @@ import {
 
 export default defineView({
   universalIdentifier: YENI_ESLESMELER_VIEW_ID,
-  name: resolveLabel({ tr: 'Yeni Eşleşmeler', en: 'New Matches' }),
+  name: metadataLabel({ tr: 'Yeni Eşleşmeler', en: 'New Matches' }),
   objectUniversalIdentifier: PROPERTY_MATCH_UNIVERSAL_IDENTIFIER,
   type: ViewType.TABLE,
   icon: 'IconSparkles',

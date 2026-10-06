@@ -26,3 +26,23 @@ export const resolveLabel = (
 // lookup tables always key off tr regardless of the UI locale.
 export const trLabel = (text: LocalizedText): string =>
   typeof text === 'string' ? text : text.tr;
+
+// Filled as a side effect of building the manifest; the catalog-fill script
+// dumps it to complete locales/tr-TR.json without a second source of truth.
+export const METADATA_LABEL_PAIRS = new Map<string, string>();
+
+// Metadata labels must be ENGLISH at the source: Twenty's per-application
+// translation catalog keys off the source string, and the SDK refuses to
+// compile an 'en' catalog — so English is the only source that lets both
+// languages work at runtime.
+export const metadataLabel = (text: LocalizedText): string => {
+  if (typeof text === 'string') {
+    return text;
+  }
+  if (text.en === undefined) {
+    return text.tr;
+  }
+  METADATA_LABEL_PAIRS.set(text.en, text.tr);
+
+  return text.en;
+};

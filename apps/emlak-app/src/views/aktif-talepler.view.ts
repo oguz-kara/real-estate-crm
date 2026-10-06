@@ -1,6 +1,6 @@
 import { defineView, ViewFilterOperand, ViewType } from 'twenty-sdk/define';
 
-import { resolveLabel } from 'src/constants/app-locale';
+import { metadataLabel } from 'src/constants/app-locale';
 import {
   AKTIF_TALEPLER_VIEW_ID,
   BUYER_REQUEST_FIELD_IDS,
@@ -9,7 +9,7 @@ import {
 
 export default defineView({
   universalIdentifier: AKTIF_TALEPLER_VIEW_ID,
-  name: resolveLabel({ tr: 'Aktif Talepler', en: 'Active Requests' }),
+  name: metadataLabel({ tr: 'Aktif Talepler', en: 'Active Requests' }),
   objectUniversalIdentifier: BUYER_REQUEST_UNIVERSAL_IDENTIFIER,
   type: ViewType.TABLE,
   icon: 'IconUserSearch',
