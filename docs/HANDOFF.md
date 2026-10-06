@@ -15,6 +15,32 @@ Written 2026-10-06 on the Mac. Read this first when you open the project on the 
 - Twenty requires Yarn 4; do not use pnpm or npm in this repo.
 - Keep explanations short and in plain language.
 
+- The fork stays public. There will be no pull requests to Twenty; the work is only for the owner's own business domain.
+- Secrets and real customer data never go into git.
+
+## How the owner likes to work (for Claude)
+
+- Answer in the language the owner writes in (Turkish or English). Keep answers short, plain and decision-first; no long option lists.
+- The owner is on a usage-limited plan. Before any multi-agent or long high-effort run, say roughly what it will cost and prefer the cheapest approach. Save results to `docs/` as they are produced.
+- Ask before installing system-level tools or changing global versions.
+- For their own projects the owner uses pnpm; this repo is the exception because Twenty requires Yarn 4.
+
+## Where the code lives
+
+- GitHub: `https://github.com/oguz-kara/twenty` (public fork). Work branch: `local-dev`. The default branch `main` is Twenty's own code.
+- Clone with: `git clone --branch local-dev https://github.com/oguz-kara/twenty.git`
+- After cloning, add Twenty's repo for updates: `git remote add upstream https://github.com/twentyhq/twenty.git`
+
+## What was learned the hard way
+
+- An app's custom tools show up in AI chat and MCP, but workflow AI Agent steps and `runAgent` do not load them. Plan custom agent tools around that (see `docs/PLATFORM-NOTES.md`, sections 2 and 7).
+- AI chat uses the logged-in user's role and ignores a role assigned to an agent.
+- There is no "manual approval" step. Use the workflow Form step as the approval gate; it has no reject button and no timeout.
+- API keys cannot run or answer workflows, and cannot create other API keys. Those need a user session token (login mutations are on `/metadata`).
+- `create-twenty-app` opens a browser and runs `corepack enable` on its own. Pin it to the server's version (`create-twenty-app@2.44.0`) and add the remote first with `twenty remote:add --url <server> --api-key <key>`.
+- The first page load after `npx nx start` takes about a minute, and the backend restarts once while shared code rebuilds.
+- The hello-world test app is not in this repo. It lived in a scratch folder on the Mac; recreate it with the commands in section 1 of the short note.
+
 ## What is already done
 
 - `LOCAL-SETUP.md` (repo root): how it was set up and started on the Mac. The ports there (5433, 6380, 3002) were chosen only because the Mac had other projects running. On a clean machine use the default ports from the official docs.
