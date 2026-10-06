@@ -26,14 +26,17 @@ export const matchesHardCriteria = (
     }
   }
 
-  if (request.districts !== null && request.districts.trim() !== '') {
+  if (request.districts !== null) {
     const wanted = request.districts
       .split(',')
       .map(normalizeDistrict)
       .filter((district) => district !== '');
-    const actual = property.district === null ? null : normalizeDistrict(property.district);
-    if (actual === null || !wanted.includes(actual)) {
-      return false;
+    // a separators-only value must read as "anywhere", not "nowhere"
+    if (wanted.length > 0) {
+      const actual = property.district === null ? null : normalizeDistrict(property.district);
+      if (actual === null || !wanted.includes(actual)) {
+        return false;
+      }
     }
   }
 

@@ -91,6 +91,12 @@ describe('matchesHardCriteria', () => {
         { ...BASE_PROPERTY, district: null },
       ),
     ).toBe(false);
+    // a separators-only value means "anywhere", not "nowhere"
+    for (const districts of [',', ' , ', ',,']) {
+      expect(
+        matchesHardCriteria({ ...BASE_REQUEST, districts }, BASE_PROPERTY),
+      ).toBe(true);
+    }
   });
 
   test('rule 6: rooms list, null property rooms eliminated when list set', () => {

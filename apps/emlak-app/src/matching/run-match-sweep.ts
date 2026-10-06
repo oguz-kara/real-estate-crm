@@ -5,7 +5,10 @@ import {
   PAGE_SIZE,
   type SweepClient,
 } from 'src/follow-up/run-sweep';
-import { runRequestMatching } from 'src/matching/run-request-matching';
+import {
+  type MatchSummary,
+  runRequestMatching,
+} from 'src/matching/run-request-matching';
 
 export type MatchSweepResult = {
   requestsScanned: number;
@@ -35,15 +38,34 @@ const fetchActiveRequests = (client: SweepClient): Promise<ActiveRequestNode[]> 
     return result.buyerRequests;
   });
 
+const TASK_BODY_MATCH_LIMIT = 3;
+
+const formatMatchLine = (match: MatchSummary): string => {
+  const parts = [match.propertyName ?? match.propertyId];
+  if (match.priceTl !== null) {
+    parts.push(`${match.priceTl.toLocaleString('tr-TR')} TL`);
+  }
+  if (match.district !== null) {
+    parts.push(match.district);
+  }
+  parts.push(
+    resolveLabel({ tr: `skor ${match.score}`, en: `score ${match.score}` }),
+  );
+  return parts.join(' — ');
+};
+
 const createMatchTask = async (
   client: SweepClient,
   request: ActiveRequestNode,
   createdCount: number,
-  topMatchNames: string[],
+  newMatches: MatchSummary[],
   nowIso: string,
 ): Promise<void> => {
   const requestName = request.name ?? request.id;
-  const listText = topMatchNames.length === 0 ? '' : `\n\n- ${topMatchNames.join('\n- ')}`;
+  // the task announces what is NEW — old high-score matches must not
+  // drown out the property the consultant has not seen yet
+  const lines = newMatches.slice(0, TASK_BODY_MATCH_LIMIT).map(formatMatchLine);
+  const listText = lines.length === 0 ? '' : `\n\n- ${lines.join('\n- ')}`;
 
   const created = (await client.mutation({
     createTask: {
@@ -106,16 +128,17 @@ export const runMatchSweep = async (
       // a task only when the run surfaced something the office has not
       // seen yet; refreshes alone never ping anyone
       if (matching.created > 0) {
-        await createMatchTask(
-          client,
-          request,
-          matching.created,
-          matching.topMatches
-            .map((match) => match.propertyName)
-            .filter((name): name is string => name !== null),
-          nowIso,
-        );
+        await createMatchTask(client, request, matching.created, matching.newMatches, nowIso);
         result.tasksCreated += 1;
+      }
+
+      if (matching.errors > 0) {
+        result.errors += 1;
+        if (result.errorSamples.length < 3) {
+          result.errorSamples.push(
+            `${request.id}: ${matching.errors} match write(s) failed`,
+          );
+        }
       }
     } catch (error) {
       // one broken request must not abort the sweep

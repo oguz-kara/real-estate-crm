@@ -10,6 +10,8 @@ type StubConfig = {
   properties?: Array<Record<string, unknown>>;
   existingMatches?: Array<Record<string, unknown>>;
   failPropertiesQuery?: boolean;
+  // one entry per createPropertyMatch call: an error message to throw, or null
+  createFailures?: Array<string | null>;
 };
 
 const REQUEST = {
@@ -73,6 +75,12 @@ const makeStub = (config: StubConfig) => {
     },
     mutation: async (payload) => {
       mutations.push(payload);
+      if ('createPropertyMatch' in payload) {
+        const failure = config.createFailures?.shift();
+        if (failure != null) {
+          throw new Error(failure);
+        }
+      }
       return { createPropertyMatch: { id: 'match-x' } };
     },
   };
@@ -150,6 +158,50 @@ describe('runRequestMatching', () => {
     const result = await runRequestMatching(client, 'req-1', NOW);
     expect(result.matched).toBe(0);
     expect(mutations).toHaveLength(0);
+  });
+
+  test('topMatches carry price, district, status and isNew for the tool output', async () => {
+    const { client } = makeStub({ request: REQUEST, properties: [PROPERTY] });
+    const result = await runRequestMatching(client, 'req-1', NOW);
+
+    expect(result.topMatches[0]).toEqual({
+      propertyId: 'prop-1',
+      propertyName: 'Bornova 3+1',
+      priceTl: 8_000_000,
+      district: 'Bornova',
+      score: 100,
+      status: 'YENI',
+      isNew: true,
+    });
+    expect(result.newMatches).toEqual(result.topMatches);
+  });
+
+  test('a unique-index collision means the pair already exists — tolerated, loop continues', async () => {
+    const secondProperty = { ...PROPERTY, id: 'prop-2', name: 'Bornova 3+1 B' };
+    const { client, mutations } = makeStub({
+      request: REQUEST,
+      properties: [PROPERTY, secondProperty],
+      createFailures: ['duplicate key value violates unique constraint', null],
+    });
+    const result = await runRequestMatching(client, 'req-1', NOW);
+
+    expect(result.created).toBe(1);
+    expect(result.errors).toBe(0);
+    expect(mutations.filter((m) => 'createPropertyMatch' in m)).toHaveLength(2);
+  });
+
+  test('a transient write error is counted and does not lose the other creations', async () => {
+    const secondProperty = { ...PROPERTY, id: 'prop-2', name: 'Bornova 3+1 B' };
+    const { client } = makeStub({
+      request: REQUEST,
+      properties: [PROPERTY, secondProperty],
+      createFailures: ['socket hang up', null],
+    });
+    const result = await runRequestMatching(client, 'req-1', NOW);
+
+    expect(result.created).toBe(1);
+    expect(result.errors).toBe(1);
+    expect(result.newMatches).toHaveLength(1);
   });
 
   test('a non-active request is skipped entirely', async () => {

@@ -42,6 +42,16 @@ const KONUT_PROPERTY = {
   businessFeatures: null,
 };
 
+const OLD_KONUT_PROPERTY = { ...KONUT_PROPERTY, id: 'prop-old', name: 'Eski Portföy' };
+
+const EXISTING_OLD_MATCH = {
+  id: 'match-old',
+  name: 'Ali — Satılık Daire ↔ Eski Portföy',
+  propertyId: 'prop-old',
+  score: 100,
+  status: 'GOSTERILDI',
+};
+
 const page = (nodes: Array<Record<string, unknown>>) => ({
   edges: nodes.map((node) => ({ node })),
   pageInfo: { hasNextPage: false, endCursor: null },
@@ -65,10 +75,14 @@ const makeStub = (options: { failFor?: string } = {}) => {
         if (options.failFor === 'KONUT' && filter.includes('KONUT')) {
           throw new Error('properties query refused');
         }
-        return { properties: page(filter.includes('ARSA') ? [] : [KONUT_PROPERTY]) };
+        return {
+          properties: page(
+            filter.includes('ARSA') ? [] : [KONUT_PROPERTY, OLD_KONUT_PROPERTY],
+          ),
+        };
       }
       if ('propertyMatches' in payload) {
-        return { propertyMatches: page([]) };
+        return { propertyMatches: page([EXISTING_OLD_MATCH]) };
       }
       throw new Error(`unexpected query ${Object.keys(payload).join()}`);
     },
@@ -90,11 +104,22 @@ describe('runMatchSweep', () => {
     expect(result.tasksCreated).toBe(1);
 
     const tasks = mutations.filter((m) => 'createTask' in m) as Array<{
-      createTask: { __args: { data: { title: string } } };
+      createTask: {
+        __args: { data: { title: string; bodyV2: { markdown: string } } };
+      };
     }>;
     expect(tasks).toHaveLength(1);
     expect(tasks[0].createTask.__args.data.title).toContain('Ali — Satılık Daire');
     expect(tasks[0].createTask.__args.data.title).toContain('1');
+
+    // the body lists what is NEW, with price/district/score — a request full
+    // of old high-score matches must not drown out the one new property
+    const body = tasks[0].createTask.__args.data.bodyV2.markdown;
+    expect(body).toContain('Bornova 3+1');
+    expect(body).toContain('8.000.000 TL');
+    expect(body).toContain('Bornova');
+    expect(body).toContain('skor 100');
+    expect(body).not.toContain('Eski Portföy');
 
     const target = mutations.find((m) => 'createTaskTarget' in m) as {
       createTaskTarget: { __args: { data: Record<string, unknown> } };

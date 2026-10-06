@@ -11,6 +11,16 @@ import { buildRequestSearchParams } from 'src/matching/request-search-params';
 import { scoreMatch } from 'src/matching/score-match';
 import { buildPropertyFilter } from 'src/search/build-property-filter';
 
+export type MatchSummary = {
+  propertyId: string;
+  propertyName: string | null;
+  priceTl: number | null;
+  district: string | null;
+  score: number;
+  status: string;
+  isNew: boolean;
+};
+
 export type RequestMatchingResult = {
   requestId: string;
   requestName: string | null;
@@ -18,7 +28,9 @@ export type RequestMatchingResult = {
   matched: number;
   created: number;
   refreshed: number;
-  topMatches: Array<{ propertyId: string; propertyName: string | null; score: number }>;
+  errors: number;
+  topMatches: MatchSummary[];
+  newMatches: MatchSummary[];
 };
 
 const TOP_MATCHES_LIMIT = 5;
@@ -199,7 +211,9 @@ export const runRequestMatching = async (
     matched: 0,
     created: 0,
     refreshed: 0,
+    errors: 0,
     topMatches: [],
+    newMatches: [],
   };
 
   const requestNode = await fetchRequest(client, requestId);
@@ -218,11 +232,6 @@ export const runRequestMatching = async (
     .map((property) => ({ property, score: scoreMatch(request, property, now) }))
     .sort((left, right) => right.score - left.score);
   result.matched = candidates.length;
-  result.topMatches = candidates.slice(0, TOP_MATCHES_LIMIT).map((candidate) => ({
-    propertyId: candidate.property.id,
-    propertyName: candidate.property.name,
-    score: candidate.score,
-  }));
 
   const existingByPropertyId = new Map<string, MatchNode>();
   for (const match of await fetchExistingMatches(client, requestId)) {
@@ -231,45 +240,83 @@ export const runRequestMatching = async (
     }
   }
 
+  const summaries: MatchSummary[] = [];
+
   for (const candidate of candidates) {
     const existing = existingByPropertyId.get(candidate.property.id);
     const matchName = `${requestNode.name ?? 'Talep'} ↔ ${candidate.property.name ?? 'Portföy'}`;
+    const summary: MatchSummary = {
+      propertyId: candidate.property.id,
+      propertyName: candidate.property.name,
+      priceTl:
+        candidate.property.priceMicros === null
+          ? null
+          : candidate.property.priceMicros / 1_000_000,
+      district: candidate.property.district,
+      score: candidate.score,
+      status: existing?.status ?? 'YENI',
+      isNew: existing === undefined,
+    };
+    summaries.push(summary);
 
-    if (existing === undefined) {
-      await client.mutation({
-        createPropertyMatch: {
-          __args: {
-            data: {
-              name: matchName,
-              requestId,
-              propertyId: candidate.property.id,
-              score: candidate.score,
-              status: 'YENI',
+    // one failed write must not throw away the pairs already created:
+    // the (requestId, propertyId) dedupe makes a lost `created` count a
+    // permanently missed sweep notification
+    try {
+      if (existing === undefined) {
+        await client.mutation({
+          createPropertyMatch: {
+            __args: {
+              data: {
+                name: matchName,
+                requestId,
+                propertyId: candidate.property.id,
+                score: candidate.score,
+                status: 'YENI',
+              },
             },
+            id: true,
           },
-          id: true,
-        },
-      });
-      result.created += 1;
-      continue;
-    }
+        });
+        result.created += 1;
+        continue;
+      }
 
-    // the score and name follow the data, the status belongs to the office:
-    // BEGENMEDI and friends are never overwritten after birth
-    const changedFields: Record<string, unknown> = {};
-    if (Number(existing.score) !== candidate.score) changedFields.score = candidate.score;
-    if (existing.name !== matchName) changedFields.name = matchName;
+      // the score and name follow the data, the status belongs to the office:
+      // BEGENMEDI and friends are never overwritten after birth
+      const changedFields: Record<string, unknown> = {};
+      if (Number(existing.score) !== candidate.score) changedFields.score = candidate.score;
+      if (existing.name !== matchName) changedFields.name = matchName;
 
-    if (Object.keys(changedFields).length > 0) {
-      await client.mutation({
-        updatePropertyMatch: {
-          __args: { id: existing.id, data: changedFields },
-          id: true,
-        },
-      });
-      result.refreshed += 1;
+      if (Object.keys(changedFields).length > 0) {
+        await client.mutation({
+          updatePropertyMatch: {
+            __args: { id: existing.id, data: changedFields },
+            id: true,
+          },
+        });
+        result.refreshed += 1;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // a unique-index collision means a concurrent run created the pair
+      if (existing === undefined && /duplicate|unique/i.test(message)) {
+        summary.isNew = false;
+        continue;
+      }
+      console.error(
+        `match write failed for request ${requestId}, property ${candidate.property.id}`,
+        error,
+      );
+      result.errors += 1;
+      if (existing === undefined) {
+        summary.isNew = false;
+      }
     }
   }
+
+  result.topMatches = summaries.slice(0, TOP_MATCHES_LIMIT);
+  result.newMatches = summaries.filter((summary) => summary.isNew);
 
   return result;
 };
