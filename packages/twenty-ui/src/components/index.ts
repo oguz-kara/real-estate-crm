@@ -67,8 +67,8 @@ export type { SettingsRowProps } from './input/SettingsRow/types/SettingsRowProp
 export { AnimatedIconCrossfade } from './layout/AnimatedIconCrossfade/AnimatedIconCrossfade';
 export { OverflowingList } from './layout/OverflowingList/OverflowingList';
 export type { OverflowingListProps } from './layout/OverflowingList/types/OverflowingListProps';
-export { ResizablePanel } from './layout/ResizablePanel/ResizablePanel';
-export type { ResizablePanelProps } from './layout/ResizablePanel/types/ResizablePanelProps';
+export { PanelResizeHandle } from './layout/PanelResizeHandle/PanelResizeHandle';
+export type { PanelResizeHandleProps } from './layout/PanelResizeHandle/types/PanelResizeHandleProps';
 export { Section } from './layout/Section/Section';
 export type { SectionHeaderProps } from './layout/Section/types/SectionHeaderProps';
 export type { SectionRootProps } from './layout/Section/types/SectionRootProps';
