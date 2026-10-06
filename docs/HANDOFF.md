@@ -1,6 +1,8 @@
 # Handoff: continue this project on another machine
 
-Written 2026-10-06 on the Mac. Read this first when you open the project on the Windows machine. If you use Claude Code there, start it in the repo folder and say: "Read docs/HANDOFF.md and continue from there."
+Written 2026-10-06 on the Mac. Read this first when you open the project anywhere new. If you use Claude Code, start it in the repo folder and say: "Read docs/HANDOFF.md and continue from there."
+
+Update 2026-10-06: the Windows local setup was dropped. Development now happens in Claude Code cloud sessions on branch `local-dev`. The fork was renamed to `oguz-kara/real-estate-crm`. Cloud containers are ephemeral: commit and push anything worth keeping before the session ends. When cloning, fetch only `local-dev` (full history is ~2 GB).
 
 ## What this project is
 
@@ -27,8 +29,8 @@ Written 2026-10-06 on the Mac. Read this first when you open the project on the 
 
 ## Where the code lives
 
-- GitHub: `https://github.com/oguz-kara/twenty` (public fork). Work branch: `local-dev`. The default branch `main` is Twenty's own code.
-- Clone with: `git clone --branch local-dev https://github.com/oguz-kara/twenty.git`
+- GitHub: `https://github.com/oguz-kara/real-estate-crm` (public fork of Twenty, renamed). Work branch: `local-dev`. The default branch `main` is Twenty's own code.
+- Clone with: `git clone --depth 1 --single-branch --branch local-dev https://github.com/oguz-kara/real-estate-crm.git`
 - After cloning, add Twenty's repo for updates: `git remote add upstream https://github.com/twentyhq/twenty.git`
 
 ## What was learned the hard way
@@ -52,7 +54,18 @@ Written 2026-10-06 on the Mac. Read this first when you open the project on the 
 - Nothing that calls an LLM was tested (no provider key was set). To enable AI, put `ANTHROPIC_API_KEY=` or `OPENAI_API_KEY=` in `packages/twenty-server/.env` and restart the server and worker. The steps for the AI tests are in the long version.
 - No feature work has started. Suggested first step: list the first five features for the wife's company and sort each into "an app can do this" or "needs a core change".
 
-## Setting up on Windows
+## Setting up in a Claude Code cloud session
+
+The container ships Node 22 but the repo needs `^24.5.0`, so install Node 24 first. From the repo root:
+
+1. `curl -fsSL -o /tmp/node24.tar.xz https://nodejs.org/dist/v24.16.0/node-v24.16.0-linux-x64.tar.xz && tar -xf /tmp/node24.tar.xz -C /opt && export PATH=/opt/node-v24.16.0-linux-x64/bin:$PATH`
+2. `bash packages/twenty-utils/setup-dev-env.sh` (starts local Postgres 16 and Redis, creates databases and `.env` files on the default ports)
+3. `yarn` (about 10 minutes), then `npx nx database:init twenty-server` if the script said so
+4. `yarn start` — backend on :3000, frontend on :3001
+
+To avoid repeating this every session, put steps 1-3 in the cloud environment's Setup script (environment menu in the session title bar, then Edit).
+
+## Setting up on Windows (dropped, kept for reference)
 
 The official docs support Windows only through WSL (Ubuntu inside Windows). See `packages/twenty-docs/developers/contribute/capabilities/local-setup.mdx`, tab "Windows (WSL)".
 
