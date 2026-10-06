@@ -14,6 +14,7 @@
     "lint": "oxlint -c .oxlintrc.json .",
     "lint:fix": "oxlint --fix -c .oxlintrc.json .",
     "typecheck": "tsgo --noEmit -p tsconfig.spec.json",
+    "import:sahibinden": "tsx scripts/import-sahibinden.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run --config vitest.unit.config.ts"
@@ -25,6 +26,7 @@
     "oxlint": "^0.16.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "tsx": "^4.23.15",
     "twenty-client-sdk": "2.44.0",
     "twenty-sdk": "2.44.0",
     "twenty-ui": "2.44.0",
