@@ -76,6 +76,10 @@ export class WorkspaceMigrationRunnerService {
       legacyCacheKeyNames.push('rolesPermissions');
     }
 
+    if (flatMapsKeysSet.has('flatApplicationVariableMaps')) {
+      legacyCacheKeyNames.push('applicationVariableUserValueMaps');
+    }
+
     return {
       shouldIncrementMetadataGraphqlSchemaVersion,
       legacyCacheKeyNames,
