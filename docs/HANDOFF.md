@@ -45,7 +45,8 @@ Update 2026-10-06: the Windows local setup was dropped. Development now happens 
 
 ## What is already done
 
-- `apps/emlak-app/`: the Emlak SDK app (feature 1). Defines the `property` object (Portföy) with type/listing/status selects, TRY price, address, rooms, areas and an `owner` relation to Person. Sync it to a workspace with `yarn twenty apply` from that folder after `twenty remote:add`. `node_modules` is not committed; run `yarn` there first.
+- `apps/emlak-app/`: the Emlak SDK app. Defines the `property` object with the full sahibinden schema (~56 fields + 8 multi-select groups, Turkish labels, locale-ready via `TWENTY_APP_LOCALE`), a unique `externalId` index, 4 default views, a sidebar entry, the `search_properties` AI tool (chat + MCP) and the import CLI (`yarn import:sahibinden <file> [--dry-run]`, idempotent, rate-limit aware, writes a calibration report). Sync with `yarn twenty apply` after `twenty remote:add`; run `yarn` there first. Spec and plan: `docs/superpowers/`.
+- The real sahibinden export (41 İzmir listings) was calibrated and imported into the local dev workspace on 2026-10-06. The export file and the imported database are NOT in git (real data, public repo) and the cloud container is ephemeral — after a fresh session, re-run the import with the export file to repopulate. Calibration state lives in code (option sets + mappings), so a re-import is minutes, not work.
 
 - `LOCAL-SETUP.md` (repo root): how it was set up and started on the Mac. The ports there (5433, 6380, 3002) were chosen only because the Mac had other projects running. On a clean machine use the default ports from the official docs.
 - `docs/PLATFORM-NOTES.md`: short note on what the platform supports, where permissions leak, and what needs a fork. Read it before proposing features.
