@@ -1,4 +1,4 @@
-import { PROPERTY_MULTI_SELECT_OPTIONS } from 'src/constants/property-options';
+import { AMENITY_LABEL_TO_FIELD_VALUE } from 'src/constants/property-options';
 import { STRUCTURAL_FEATURE_KEYS } from 'src/import/structural-feature-keys';
 import { type ImportIssue } from 'src/import/raw-listing.type';
 
@@ -6,17 +6,6 @@ export type MappedFeatures = {
   fields: Record<string, string[]>;
   issues: ImportIssue[];
 };
-
-// label → [multiSelectFieldName, optionValue], across all 6 amenity fields
-const AMENITY_LABEL_INDEX: Record<string, readonly [string, string]> =
-  Object.fromEntries(
-    Object.entries(PROPERTY_MULTI_SELECT_OPTIONS).flatMap(
-      ([fieldName, options]) =>
-        options.map(
-          (option) => [option.label, [fieldName, option.value]] as const,
-        ),
-    ),
-  );
 
 export const mapFeatures = (
   ozellikler: Record<string, string | null>,
@@ -29,7 +18,7 @@ export const mapFeatures = (
       continue;
     }
 
-    const amenity = AMENITY_LABEL_INDEX[key];
+    const amenity = AMENITY_LABEL_TO_FIELD_VALUE[key];
 
     if (amenity === undefined) {
       issues.push({

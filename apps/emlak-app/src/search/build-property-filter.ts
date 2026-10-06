@@ -1,16 +1,7 @@
-import { PROPERTY_MULTI_SELECT_OPTIONS } from 'src/constants/property-options';
+import { AMENITY_VALUE_TO_FIELD } from 'src/constants/property-options';
 import { type PropertySearchParams } from 'src/search/property-search-params.type';
 
 type FilterNode = Record<string, unknown>;
-
-// feature value → owning multi-select field; an ambiguous value (e.g.
-// SPOR_SALONU exists in two groups) resolves to the first declaring field
-const FEATURE_VALUE_TO_FIELD: Record<string, string> = {};
-for (const [fieldName, options] of Object.entries(PROPERTY_MULTI_SELECT_OPTIONS)) {
-  for (const option of options) {
-    FEATURE_VALUE_TO_FIELD[option.value] ??= fieldName;
-  }
-}
 
 export const buildPropertyFilter = (
   params: PropertySearchParams,
@@ -65,7 +56,7 @@ export const buildPropertyFilter = (
   if (params.features !== undefined && params.features.length > 0) {
     if (params.featuresMode === 'all') {
       for (const feature of params.features) {
-        const fieldName = FEATURE_VALUE_TO_FIELD[feature];
+        const fieldName = AMENITY_VALUE_TO_FIELD[feature];
         if (fieldName !== undefined) {
           conditions.push({ [fieldName]: { containsAny: [feature] } });
         }
@@ -73,7 +64,7 @@ export const buildPropertyFilter = (
     } else {
       const byField: Record<string, string[]> = {};
       for (const feature of params.features) {
-        const fieldName = FEATURE_VALUE_TO_FIELD[feature];
+        const fieldName = AMENITY_VALUE_TO_FIELD[feature];
         if (fieldName !== undefined) {
           byField[fieldName] = [...(byField[fieldName] ?? []), feature];
         }

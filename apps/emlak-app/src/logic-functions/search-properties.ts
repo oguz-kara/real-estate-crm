@@ -59,9 +59,22 @@ export const searchPropertiesHandler = async (
     properties?: { edges?: Array<{ node: Record<string, unknown> }> };
   };
 
-  const results = (queryResult.properties?.edges ?? []).map(
-    (edge) => edge.node,
-  );
+  const results = (queryResult.properties?.edges ?? []).map((edge) => {
+    const { price, ...node } = edge.node as {
+      price?: { amountMicros?: number | null; currencyCode?: string | null };
+    } & Record<string, unknown>;
+    const amountMicros = price?.amountMicros;
+
+    return {
+      ...node,
+      // callers (and the model reading this) work in TL, never micros
+      priceTl:
+        amountMicros === null || amountMicros === undefined
+          ? null
+          : Number(amountMicros) / 1_000_000,
+      currencyCode: price?.currencyCode ?? null,
+    };
+  });
 
   return { count: results.length, results };
 };
@@ -73,7 +86,8 @@ export default defineLogicFunction({
     'Portföy (emlak ilanı) arama. Kategori, ilan tipi, ilçe, fiyat aralığı (TL), ' +
     'metrekare, oda sayısı, bina yaşı, ısıtma ve özelliklere (örn. ASANSOR, OTOPARK) ' +
     'göre filtreler; eşleşen portföyleri fiyat ve konum bilgisiyle döndürür. ' +
-    'Fiyatlar TL cinsinden verilir. Seçenek değerleri SCREAMING_SNAKE kimliklerdir ' +
+    'Fiyatlar girişte de çıkışta da (priceTl alanı) TL cinsindendir. ' +
+    'Seçenek değerleri SCREAMING_SNAKE kimliklerdir ' +
     '(örn. category KONUT, rooms R3_1 = "3+1", buildingAge AGE_6_10 = "6-10 arası").',
   timeoutSeconds: 30,
   toolTriggerSettings: {

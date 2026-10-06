@@ -28,6 +28,20 @@ describe('mapCategories', () => {
     expect(result.issues[0].raw).toBe('Bilinmeyen Tip');
   });
 
+  test('a label that is both category and subType fills both slots', () => {
+    const result = mapCategories('Emlak, Bina, Satılık, Bina');
+    expect(result.category).toBe('BINA');
+    expect(result.listingType).toBe('SATILIK');
+    expect(result.subType).toBe('BINA');
+    expect(result.issues).toEqual([]);
+  });
+
+  test('Devremülk listing keeps its subType', () => {
+    const result = mapCategories('Emlak, Devremülk, Satılık, Devremülk');
+    expect(result.category).toBe('DEVREMULK');
+    expect(result.subType).toBe('DEVREMULK');
+  });
+
   test('null input', () => {
     const result = mapCategories(null);
     expect(result).toEqual({

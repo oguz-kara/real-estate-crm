@@ -11,6 +11,60 @@ export type NormalizedListing = {
   issues: ImportIssue[];
 };
 
+// Every field the import owns. The record is a FULL snapshot: a field absent
+// from the source is written as an explicit null so a re-import overwrites
+// stale values instead of keeping them (the upsert PATCHes this record as-is).
+// Process fields (status, owner) are deliberately not listed.
+const IMPORT_OWNED_CURRENCY_FIELDS = [
+  'price',
+  'dues',
+  'transferFee',
+  'pricePerSqm',
+] as const;
+
+const IMPORT_OWNED_NULLABLE_FIELDS = [
+  'description',
+  'category',
+  'subType',
+  'listingType',
+  'city',
+  'district',
+  'neighborhood',
+  'latitude',
+  'longitude',
+  'sqmGross',
+  'sqmNet',
+  'imageFiles',
+  'videoFiles',
+  'importNotes',
+  'rooms',
+  'buildingAge',
+  'floorLocation',
+  'totalFloors',
+  'heating',
+  'bathroomCount',
+  'balcony',
+  'furnished',
+  'creditEligible',
+  'deedStatus',
+  'fromWho',
+  'exchangeable',
+  'inSite',
+  'siteName',
+  'usageStatus',
+  'zoningStatus',
+  'blockNo',
+  'parcelNo',
+  'kaks',
+  'gabari',
+  'interiorFeatures',
+  'exteriorFeatures',
+  'neighborhoodFeatures',
+  'transportFeatures',
+  'view',
+  'infrastructure',
+] as const;
+
 const setIfDefined = (
   record: Record<string, unknown>,
   key: string,
@@ -41,6 +95,13 @@ export const normalizeListing = (raw: RawListing): NormalizedListing => {
   const amountMicros = parsePrice(raw.Fiyat);
   if (amountMicros !== null) {
     record.price = { amountMicros, currencyCode: 'TRY' };
+  } else if ((raw.Fiyat ?? '').trim() !== '') {
+    issues.push({
+      externalId: null,
+      field: 'Fiyat',
+      raw: raw.Fiyat as string,
+      reason: 'INVALID',
+    });
   }
 
   const address = parseAddress(raw.Adres);
@@ -70,14 +131,22 @@ export const normalizeListing = (raw: RawListing): NormalizedListing => {
 
   const issuesWithId = issues.map((issue) => ({ ...issue, externalId }));
 
-  if (issuesWithId.length > 0) {
-    record.importNotes = {
-      unmapped: issuesWithId.map(({ field, raw: rawValue, reason }) => ({
-        field,
-        raw: rawValue,
-        reason,
-      })),
-    };
+  record.importNotes =
+    issuesWithId.length > 0
+      ? {
+          unmapped: issuesWithId.map(({ field, raw: rawValue, reason }) => ({
+            field,
+            raw: rawValue,
+            reason,
+          })),
+        }
+      : null;
+
+  for (const field of IMPORT_OWNED_NULLABLE_FIELDS) {
+    record[field] ??= null;
+  }
+  for (const field of IMPORT_OWNED_CURRENCY_FIELDS) {
+    record[field] ??= { amountMicros: null, currencyCode: 'TRY' };
   }
 
   return { record, issues: issuesWithId };

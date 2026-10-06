@@ -281,6 +281,23 @@ export const PROPERTY_MULTI_SELECT_OPTIONS: Record<string, readonly SelectOption
   ]),
 };
 
+// Shared amenity resolution: a label/value appearing in several groups
+// (SAHIL, SPOR_SALONU) resolves FIRST-WINS here, and both the import mapper
+// and the filter builder consume these indexes — import placement and
+// search target can never diverge.
+export const AMENITY_LABEL_TO_FIELD_VALUE: Record<
+  string,
+  readonly [fieldName: string, value: string]
+> = {};
+export const AMENITY_VALUE_TO_FIELD: Record<string, string> = {};
+
+for (const [fieldName, options] of Object.entries(PROPERTY_MULTI_SELECT_OPTIONS)) {
+  for (const option of options) {
+    AMENITY_LABEL_TO_FIELD_VALUE[option.label] ??= [fieldName, option.value];
+    AMENITY_VALUE_TO_FIELD[option.value] ??= fieldName;
+  }
+}
+
 const buildLabelLookup = (
   optionSets: Record<string, readonly SelectOption[]>,
 ): Record<string, Record<string, string>> =>

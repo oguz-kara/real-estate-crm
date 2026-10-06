@@ -9,6 +9,8 @@ describe('parseCoordinates', () => {
     ['', { latitude: null, longitude: null }],
     [null, { latitude: null, longitude: null }],
     ['38.468', { latitude: null, longitude: null }],
+    ['38.468, ', { latitude: null, longitude: null }],
+    [',', { latitude: null, longitude: null }],
   ])('%j', (raw, expected) => {
     expect(parseCoordinates(raw)).toEqual(expected);
   });

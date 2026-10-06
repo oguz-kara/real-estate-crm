@@ -65,7 +65,9 @@ const main = async () => {
     issues.push(...normalized.issues);
 
     const missingField = REQUIRED_FIELDS.find(
-      (field) => normalized.record[field] === undefined,
+      (field) =>
+        normalized.record[field] === undefined ||
+        normalized.record[field] === null,
     );
 
     if (missingField !== undefined) {

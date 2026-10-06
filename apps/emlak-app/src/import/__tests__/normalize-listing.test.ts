@@ -76,29 +76,52 @@ describe('normalizeListing', () => {
     });
   });
 
-  test('broken price and unknown heating produce issues, not a crash', () => {
+  test('broken price and unknown heating produce null fields plus issues', () => {
     const { record, issues } = normalizeListing({
       ...SAMPLE,
       Fiyat: 'TL',
       Özellikler: { Isıtma: 'Füzyon Reaktörü' },
     });
 
-    expect(record.price).toBeUndefined();
-    expect(record.heating).toBeUndefined();
-    expect(issues).toHaveLength(1);
-    expect(issues[0]).toMatchObject({
-      field: 'Isıtma',
-      raw: 'Füzyon Reaktörü',
-      reason: 'UNMAPPED_VALUE',
-    });
+    expect(record.price).toEqual({ amountMicros: null, currencyCode: 'TRY' });
+    expect(record.heating).toBeNull();
+    expect(issues).toHaveLength(2);
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'Fiyat', raw: 'TL', reason: 'INVALID' }),
+        expect.objectContaining({
+          field: 'Isıtma',
+          raw: 'Füzyon Reaktörü',
+          reason: 'UNMAPPED_VALUE',
+        }),
+      ]),
+    );
   });
 
-  test('clean listing carries no importNotes', () => {
+  test('clean listing carries explicit null importNotes so re-import clears stale notes', () => {
     const { record, issues } = normalizeListing({
       ...SAMPLE,
       Özellikler: { Asansör: 'Evet' },
     });
     expect(issues).toEqual([]);
-    expect(record.importNotes).toBeUndefined();
+    expect(record.importNotes).toBeNull();
+  });
+
+  test('absent import-owned fields are explicit nulls so re-import overwrites, never keeps stale data', () => {
+    const { record } = normalizeListing({
+      ...SAMPLE,
+      Özellikler: {},
+      Konum: '',
+    });
+
+    expect(record.heating).toBeNull();
+    expect(record.rooms).toBeNull();
+    expect(record.balcony).toBeNull();
+    expect(record.latitude).toBeNull();
+    expect(record.interiorFeatures).toBeNull();
+    expect(record.dues).toEqual({ amountMicros: null, currencyCode: 'TRY' });
+    // process fields stay untouched by the import
+    expect(record).not.toHaveProperty('status');
+    expect(record).not.toHaveProperty('ownerId');
   });
 });

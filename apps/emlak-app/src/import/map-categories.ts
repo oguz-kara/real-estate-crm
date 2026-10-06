@@ -26,20 +26,23 @@ export const mapCategories = (
     .filter((token) => token.length > 0 && !IGNORED_TOKENS.has(token));
 
   for (const token of tokens) {
+    // slots fill positionally: a label that is both a category and a
+    // subType ("Bina", "Devremülk") lands in the first still-empty slot,
+    // so the second occurrence keeps the subType instead of vanishing
     const category = SAHIBINDEN_LABEL_TO_VALUE.category[token];
-    if (category !== undefined) {
+    if (category !== undefined && result.category === null) {
       result.category = category;
       continue;
     }
 
     const listingType = SAHIBINDEN_LABEL_TO_VALUE.listingType[token];
-    if (listingType !== undefined) {
+    if (listingType !== undefined && result.listingType === null) {
       result.listingType = listingType;
       continue;
     }
 
     const subType = SAHIBINDEN_LABEL_TO_VALUE.subType[token];
-    if (subType !== undefined) {
+    if (subType !== undefined && result.subType === null) {
       result.subType = subType;
       continue;
     }
