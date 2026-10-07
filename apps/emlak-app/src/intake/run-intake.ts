@@ -1,4 +1,5 @@
 import { TALEP_CIKARICI_AGENT_UNIVERSAL_IDENTIFIER } from 'src/constants/intake-ids';
+import { INTAKE_MIN_TEXT_LENGTH } from 'src/constants/intake-limits';
 import { PROPERTY_SELECT_OPTIONS } from 'src/constants/property-options';
 import { resolveLabel } from 'src/constants/app-locale';
 import { buildIntakePrompt, INTAKE_MODEL_ID } from 'src/intake/intake-response-schema';
@@ -49,8 +50,6 @@ export class IntakeError extends Error {
     super(message);
   }
 }
-
-export const INTAKE_MIN_TEXT_LENGTH = 10;
 
 const MAX_AGENT_ATTEMPTS = 2;
 
