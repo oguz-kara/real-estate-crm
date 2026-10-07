@@ -1,4 +1,4 @@
-import { defineApplicationRole } from 'twenty-sdk/define';
+import { defineApplicationRole, SystemPermissionFlag } from 'twenty-sdk/define';
 
 import {
   APP_DISPLAY_NAME,
@@ -13,4 +13,7 @@ export default defineApplicationRole({
   canUpdateAllObjectRecords: true,
   canSoftDeleteAllObjectRecords: true,
   canDestroyAllObjectRecords: false,
+  // runAgent is guarded by the AI flag; the intake route calls the
+  // zero-access extractor agent through it.
+  permissionFlagUniversalIdentifiers: [SystemPermissionFlag.AI],
 });

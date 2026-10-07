@@ -136,17 +136,21 @@ const extractWithRetry = async (
   for (let attempt = 0; attempt < MAX_AGENT_ATTEMPTS; attempt++) {
     try {
       const run = await runAgent(buildIntakePrompt(maskedText));
-      if (run.success) {
-        const payload = run.result as { response?: unknown } | null | undefined;
-        const raw = parseRawExtraction(
-          typeof payload?.response === 'string' ? payload.response : payload,
-        );
-        if (raw !== null) {
-          return raw;
-        }
+      if (!run.success) {
+        console.warn(`talep-cikarici run failed: ${run.error ?? 'unknown error'}`);
+        continue;
       }
-    } catch {
+      const payload = run.result as { response?: unknown } | null | undefined;
+      const raw = parseRawExtraction(
+        typeof payload?.response === 'string' ? payload.response : payload,
+      );
+      if (raw !== null) {
+        return raw;
+      }
+      console.warn('talep-cikarici returned no parsable json object');
+    } catch (error) {
       // a thrown runner is a failed attempt like any other
+      console.warn(`talep-cikarici call threw: ${error instanceof Error ? error.message : 'unknown error'}`);
     }
   }
 
