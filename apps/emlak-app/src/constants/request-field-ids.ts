@@ -16,6 +16,9 @@ export const BUYER_REQUEST_FIELD_IDS = {
   notes: 'f31262e7-9c75-468f-8677-f9471af7a4a4',
   buyer: '77c93dd0-0a88-4b1a-b739-6624364b3eb0',
   matches: '29551d95-54ce-4c2e-8c5b-58e23ba57705',
+  source: '1caafcdd-12fe-42ca-9b72-be9a3736e864',
+  sourceText: '9239451f-21a8-4c30-a2de-b68427df0fbf',
+  extraction: '64db2be1-682f-40ae-adc8-46daba459c21',
 } as const;
 
 export const PERSON_BUYER_REQUESTS_FIELD_ID = 'a2a63d32-1f2f-4377-ab6d-e9dc709306c0';
@@ -36,5 +39,6 @@ export const PROPERTY_MATCH_UNIQUE_INDEX = {
 } as const;
 
 export const AKTIF_TALEPLER_VIEW_ID = '2e85cb3d-6082-4a23-a878-ff125195e9f8';
+export const ONAY_BEKLEYEN_TALEPLER_VIEW_ID = '4a1bb124-7fe9-4367-a2b8-631ae18fdbc8';
 export const YENI_ESLESMELER_VIEW_ID = '2ffee36a-0ba3-4a19-ac22-15bcf4f17b70';
 export const BUYER_REQUESTS_NAV_ITEM_ID = '1740a26d-9739-45fa-b49e-012c4b689064';

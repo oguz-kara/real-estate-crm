@@ -6,6 +6,7 @@
     "Internal dedupe marker for lapse tasks": "Tarama içi tekrar önleme damgası",
     "Latest note or completed task on the person; written by the sweep": "Kişiye düşen son not veya tamamlanan son görev; tarama yazar",
     "Name": "İsim",
+    "Original text the request was extracted from": "Talebin çıkarıldığı orijinal metin",
     "Properties this person owns": "Kişinin mal sahibi olduğu portföyler",
     "Raw keys and values the import could not map": "Import sırasında eşlenemeyen ham anahtar ve değerler",
     "The owner of this property": "Portföyün mal sahibi",
@@ -38,6 +39,7 @@
     "Dues": "Aidat",
     "Exchange": "Takas",
     "Exterior Features": "Dış Özellikler",
+    "Extraction Details": "Çıkarım Detayı",
     "Facade": "Cephe",
     "Floor": "Bulunduğu Kat",
     "Floor Area Ratio": "Kaks (Emsal)",
@@ -84,6 +86,7 @@
     "Score": "Skor",
     "Sections & Rooms": "Bölüm & Oda Sayısı",
     "Source": "Kaynak",
+    "Source Text": "Kaynak Metin",
     "Status": "Durum",
     "Surroundings": "Muhit",
     "Total Floors": "Kat Sayısı",
@@ -133,6 +136,7 @@
     "For Rent — Residential": "Kiralık Konut",
     "For Sale — Residential": "Satılık Konut",
     "Land": "Arsalar",
-    "New Matches": "Yeni Eşleşmeler"
+    "New Matches": "Yeni Eşleşmeler",
+    "Requests Awaiting Approval": "Onay Bekleyen Talepler"
   }
 }

@@ -6,6 +6,7 @@
     "Internal dedupe marker for lapse tasks": "Internal dedupe marker for lapse tasks",
     "Latest note or completed task on the person; written by the sweep": "Latest note or completed task on the person; written by the sweep",
     "Name": "Name",
+    "Original text the request was extracted from": "Original text the request was extracted from",
     "Properties this person owns": "Properties this person owns",
     "Raw keys and values the import could not map": "Raw keys and values the import could not map",
     "The owner of this property": "The owner of this property",
@@ -38,6 +39,7 @@
     "Dues": "Dues",
     "Exchange": "Exchange",
     "Exterior Features": "Exterior Features",
+    "Extraction Details": "Extraction Details",
     "Facade": "Facade",
     "Floor": "Floor",
     "Floor Area Ratio": "Floor Area Ratio",
@@ -84,6 +86,7 @@
     "Score": "Score",
     "Sections & Rooms": "Sections & Rooms",
     "Source": "Source",
+    "Source Text": "Source Text",
     "Status": "Status",
     "Surroundings": "Surroundings",
     "Total Floors": "Total Floors",
@@ -128,6 +131,7 @@
     "For Rent — Residential": "For Rent — Residential",
     "For Sale — Residential": "For Sale — Residential",
     "Land": "Land",
-    "New Matches": "New Matches"
+    "New Matches": "New Matches",
+    "Requests Awaiting Approval": "Requests Awaiting Approval"
   }
 }

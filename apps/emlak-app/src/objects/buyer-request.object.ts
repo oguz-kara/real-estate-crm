@@ -34,6 +34,7 @@ export default defineObject({
         { value: 'BEKLEMEDE', label: trLabel({ tr: 'Beklemede', en: 'On Hold' }), position: 1, color: 'yellow' },
         { value: 'SONUCLANDI', label: trLabel({ tr: 'Sonuçlandı', en: 'Closed' }), position: 2, color: 'blue' },
         { value: 'IPTAL', label: trLabel({ tr: 'İptal', en: 'Cancelled' }), position: 3, color: 'gray' },
+        { value: 'TASLAK', label: trLabel({ tr: 'Taslak', en: 'Draft' }), position: 4, color: 'gray' },
       ],
     },
     {
@@ -122,6 +123,38 @@ export default defineObject({
       }),
       icon: 'IconNotes',
       isSearchable: true,
+    },
+    {
+      universalIdentifier: BUYER_REQUEST_FIELD_IDS.source,
+      name: 'source',
+      type: FieldType.SELECT as const,
+      label: metadataLabel({ tr: 'Kaynak', en: 'Source' }),
+      icon: 'IconMessage2',
+      options: [
+        { value: 'WHATSAPP', label: trLabel({ tr: 'WhatsApp', en: 'WhatsApp' }), position: 0, color: 'green' },
+        { value: 'TELEFON', label: trLabel({ tr: 'Telefon', en: 'Phone' }), position: 1, color: 'blue' },
+        { value: 'YUZ_YUZE', label: trLabel({ tr: 'Yüz yüze', en: 'In person' }), position: 2, color: 'orange' },
+        { value: 'DEFTER', label: trLabel({ tr: 'Defter', en: 'Notebook' }), position: 3, color: 'brown' },
+        { value: 'DIGER', label: trLabel({ tr: 'Diğer', en: 'Other' }), position: 4, color: 'gray' },
+      ],
+    },
+    {
+      universalIdentifier: BUYER_REQUEST_FIELD_IDS.sourceText,
+      name: 'sourceText',
+      type: FieldType.TEXT as const,
+      label: metadataLabel({ tr: 'Kaynak Metin', en: 'Source Text' }),
+      description: metadataLabel({
+        tr: 'Talebin çıkarıldığı orijinal metin',
+        en: 'Original text the request was extracted from',
+      }),
+      icon: 'IconFileText',
+    },
+    {
+      universalIdentifier: BUYER_REQUEST_FIELD_IDS.extraction,
+      name: 'extraction',
+      type: FieldType.RAW_JSON as const,
+      label: metadataLabel({ tr: 'Çıkarım Detayı', en: 'Extraction Details' }),
+      icon: 'IconBraces',
     },
   ],
 });
