@@ -1,0 +1,76 @@
+import { foldTurkish } from 'src/intake/fold-turkish';
+
+export const IZMIR_DISTRICTS = [
+  'Aliağa',
+  'Balçova',
+  'Bayındır',
+  'Bayraklı',
+  'Bergama',
+  'Beydağ',
+  'Bornova',
+  'Buca',
+  'Çeşme',
+  'Çiğli',
+  'Dikili',
+  'Foça',
+  'Gaziemir',
+  'Güzelbahçe',
+  'Karabağlar',
+  'Karaburun',
+  'Karşıyaka',
+  'Kemalpaşa',
+  'Kınık',
+  'Kiraz',
+  'Konak',
+  'Menderes',
+  'Menemen',
+  'Narlıdere',
+  'Ödemiş',
+  'Seferihisar',
+  'Selçuk',
+  'Tire',
+  'Torbalı',
+  'Urla',
+] as const;
+
+// Neighborhood / resort names people use instead of the district; keys are
+// folded (see foldTurkish).
+export const DISTRICT_ALIASES: Record<string, string> = {
+  alacati: 'Çeşme',
+  ilica: 'Çeşme',
+  dalyan: 'Çeşme',
+  ciftlikkoy: 'Çeşme',
+  gumuldur: 'Menderes',
+  ozdere: 'Menderes',
+  mordogan: 'Karaburun',
+  sirinyer: 'Buca',
+  alsancak: 'Konak',
+  goztepe: 'Konak',
+  bostanli: 'Karşıyaka',
+  mavisehir: 'Karşıyaka',
+  hatay: 'Karabağlar',
+  sigacik: 'Seferihisar',
+  iskele: 'Urla',
+};
+
+const DISTRICT_BY_FOLDED = new Map<string, string>(
+  IZMIR_DISTRICTS.map((district) => [foldTurkish(district), district]),
+);
+
+export const canonicalizeDistrict = (input: string): string | null => {
+  const folded = foldTurkish(input).trim().replace(/\s+/g, ' ');
+  if (folded === '') {
+    return null;
+  }
+  const direct = DISTRICT_BY_FOLDED.get(folded);
+  if (direct !== undefined) {
+    return direct;
+  }
+  const alias = DISTRICT_ALIASES[folded];
+  if (alias !== undefined && DISTRICT_BY_FOLDED.has(foldTurkish(alias))) {
+    return alias;
+  }
+  const [firstWord] = folded.split(' ');
+
+  return DISTRICT_BY_FOLDED.get(firstWord) ?? null;
+};
