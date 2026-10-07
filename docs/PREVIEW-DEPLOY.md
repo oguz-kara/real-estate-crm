@@ -20,20 +20,27 @@ Script iki tünel açar (server 3000 + front 3001) ve üç env değerini çeviri
 `SERVER_URL`, `FRONTEND_URL` (twenty-server/.env), `REACT_APP_SERVER_BASE_URL`
 (twenty-front/.env). URL'ler `.preview-deploy/urls.txt`'de durur.
 
-## Claude cloud oturumunda izin ÖN KOŞULU
+## Claude cloud oturumunda ÖN KOŞULLAR
 
-Claude Code cloud sandbox'ı, dışarı tünel açmayı ("External Ingress Tunnel")
-varsayılan olarak ENGELLER — cloudflared indirme adımı bile reddedilir ve Claude
-bu engeli başka araçla dolanmaz/dolanmamalıdır. Owner'ın BİR KEZ izin kuralı
-eklemesi gerekir:
+İki ayrı katman var; ikisi de owner'ın elindedir:
 
-- Proje izin dosyası `.claude/settings.json` içinde `permissions.allow` listesine:
-  `"Bash(bash packages/twenty-utils/preview-deploy.sh*)"`
-  (veya oturumda `/permissions` ekranından aynı kural).
-- Kuralı Claude kendisi EKLEMEZ (kendi kendine yetki genişletme sayılır);
-  owner ekler veya owner'ın açık onayıyla eklenir.
-- Kural buna rağmen sandbox sınıflandırıcısına takılırsa bu yol bu ortamda
-  kapalıdır; alternatif gerçek kısa süreli deploy'dur (Railway/Render — ayrı iş).
+1. **İzin kuralı** (ÇÖZÜLDÜ, 2026-10-07): `.claude/settings.json` →
+   `permissions.allow` listesinde
+   `"Bash(bash packages/twenty-utils/preview-deploy.sh*)"` duruyor
+   (owner'ın "kural ekle" talimatıyla eklendi). Script artık izin
+   engeline takılmıyor.
+2. **Konteyner ağ politikası** (ŞU AN ENGELLİ): cloudflared quick tunnel
+   kayıt olabiliyor (URL üretiliyor) ama edge veri bağlantısı
+   `*.argotunnel.com` adresine **7844 portundan** (QUIC/UDP ve HTTP2/TCP)
+   gider — cloud ortamının ağ politikası 443 dışını kesiyor, tünel 530
+   döner. Çare: oturum başlığındaki ortam menüsü → Edit → **Network
+   access** seviyesini genişletmek (veya Allowed domains'e
+   `*.argotunnel.com` eklemek; proxy yalnızca 443'e izin veriyorsa bu da
+   yetmeyebilir — o durumda tek yol daha geniş ağ seviyesidir).
+   Owner ayarı değiştirdikten sonra "kısa süreli deploy et" yeter.
+
+Ağ da açılamazsa bu yol bu ortamda kapalıdır; alternatif gerçek kısa
+süreli deploy'dur (Railway/Render — ayrı iş).
 
 ## Güvenlik gerçekleri (owner bunları kabul etti: 2026-10-07)
 
