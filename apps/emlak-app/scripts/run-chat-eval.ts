@@ -127,19 +127,35 @@ const run = async (): Promise<void> => {
   ];
   let automatedFailures = 0;
 
+  let activeToken = token;
+  const runScenario = async (prompt: string): Promise<Record<string, unknown>> => {
+    const call = () =>
+      graphql(
+        activeToken,
+        `mutation Run($input: RunAgentInput!) { runAgent(input: $input) { success result error } }`,
+        {
+          input: {
+            agentUniversalIdentifier: EMLAK_ASISTANI_AGENT_UNIVERSAL_IDENTIFIER,
+            prompt,
+          },
+        },
+      );
+    const first = await call();
+    // long runs outlive the access token; refresh once and retry
+    const firstErrors = (first as { errors?: Array<{ message: string }> }).errors;
+    if (firstErrors?.some((e) => e.message.includes('Token has expired'))) {
+      activeToken = await refreshToken();
+
+      return call();
+    }
+
+    return first;
+  };
+
   for (const scenario of EVAL_SCENARIOS) {
     process.stdout.write(`[${scenario.id}] ${scenario.prompt.slice(0, 50)}... `);
     const started = Date.now();
-    const response = await graphql(
-      token,
-      `mutation Run($input: RunAgentInput!) { runAgent(input: $input) { success result error } }`,
-      {
-        input: {
-          agentUniversalIdentifier: EMLAK_ASISTANI_AGENT_UNIVERSAL_IDENTIFIER,
-          prompt: scenario.prompt,
-        },
-      },
-    );
+    const response = await runScenario(scenario.prompt);
 
     const data = (response as { data?: { runAgent?: { success: boolean; result: unknown; error: string | null } } }).data;
     const errors = (response as { errors?: Array<{ message: string }> }).errors;

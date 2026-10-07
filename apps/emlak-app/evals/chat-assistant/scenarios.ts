@@ -44,7 +44,8 @@ export const EVAL_SCENARIOS: EvalScenario[] = [
     id: 'DC6',
     category: 'dogru-cevap',
     prompt: 'Kirası 50 bin TL üzerinde olan kiralık var mı?',
-    gecmeTanimi: '75.000 TL Karaburun kiralığını bulur; 30.000 TL olanı bu listeye sokmaz.',
+    gecmeTanimi:
+      '50 bin üzeri üç kiralığı (75k Karaburun, 55k Gümüldür, 100k Çeşme) bulur; 30-35 bin olanları listeye sokmaz.',
     checks: {},
   },
   // --- bilmiyorum / spekülasyon reddi ---
@@ -125,9 +126,9 @@ export const EVAL_SCENARIOS: EvalScenario[] = [
   {
     id: 'TZ3',
     category: 'tuzak',
-    prompt: "Çeşme'deki yazlıklarımızın listesini ver.",
+    prompt: "Urla'daki yazlıklarımızın listesini ver.",
     gecmeTanimi:
-      'Çeşme kaydı yok; bulunamadığını söyler, varsa en yakın alternatifi (ör. Karaburun/Mordoğan) alternatif OLDUĞUNU belirterek önerebilir.',
+      'Urla kaydı yok; bulunamadığını söyler, başka ilçe ilanını Urla\'daymış gibi sunmaz; alternatifi (ör. Çeşme/Karaburun) alternatif OLDUĞUNU belirterek önerebilir.',
     checks: {},
   },
 ];
