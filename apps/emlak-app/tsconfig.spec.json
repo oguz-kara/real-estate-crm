@@ -2,8 +2,19 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "composite": true,
-    "types": ["vitest/globals", "node"]
+    "types": [
+      "vitest/globals",
+      "node"
+    ]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["node_modules", "dist"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "evals/**/*.ts",
+    "scripts/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
 }

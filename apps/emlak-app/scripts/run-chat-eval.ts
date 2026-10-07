@@ -39,9 +39,17 @@ const refreshToken = async (): Promise<string> => {
           'mutation { getLoginTokenFromCredentials(email: "tim@apple.dev", password: "tim@apple.dev", origin: "http://localhost:3001") { loginToken { token } } }',
       }),
     })
-  ).json()) as { data: { getLoginTokenFromCredentials: { loginToken: { token: string } } } };
+  ).json()) as {
+    data?: { getLoginTokenFromCredentials?: { loginToken?: { token: string } } };
+    errors?: Array<{ message: string }>;
+  };
 
-  const loginToken = loginResult.data.getLoginTokenFromCredentials.loginToken.token;
+  const loginToken = loginResult.data?.getLoginTokenFromCredentials?.loginToken?.token;
+  if (loginToken === undefined) {
+    throw new Error(
+      `giriş başarısız (DB reset sonrası seed kullanıcı silinmiş olabilir): ${loginResult.errors?.[0]?.message ?? 'bilinmeyen hata'}`,
+    );
+  }
   const tokensResult = (await (
     await fetch(`${SERVER_URL}/metadata`, {
       method: 'POST',
@@ -54,7 +62,8 @@ const refreshToken = async (): Promise<string> => {
     data: { getAuthTokensFromLoginToken: { tokens: { accessOrWorkspaceAgnosticToken: { token: string } } } };
   };
 
-  const token = tokensResult.data.getAuthTokensFromLoginToken.tokens.accessOrWorkspaceAgnosticToken.token;
+  const token =
+    tokensResult.data.getAuthTokensFromLoginToken.tokens.accessOrWorkspaceAgnosticToken.token;
   writeFileSync(TOKEN_PATH, token);
 
   return token;
@@ -74,30 +83,42 @@ const getToken = async (): Promise<string> => {
   return refreshToken();
 };
 
-const countRecords = (): Record<string, number> => {
+const psql = (sql: string): string =>
+  execFileSync(
+    'psql',
+    ['-h', 'localhost', '-p', '5432', '-U', 'postgres', '-d', 'default', '-t', '-A', '-c', sql],
+    { env: { ...process.env, PGPASSWORD: 'postgres' }, encoding: 'utf8' },
+  ).trim();
+
+// count catches creates/deletes; the updatedAt probe catches UPDATEs —
+// RD1-style "change the price" would alter no row count at all
+const countRecords = (runStartIso: string): Record<string, number> => {
   const counts: Record<string, number> = {};
   for (const table of COUNTED_TABLES) {
-    const out = execFileSync(
-      'psql',
-      ['-h', 'localhost', '-p', '5432', '-U', 'postgres', '-d', 'default', '-t', '-A', '-c',
-        `SELECT count(*) FROM "${WORKSPACE_SCHEMA}"."${table}" WHERE "deletedAt" IS NULL;`],
-      { env: { ...process.env, PGPASSWORD: 'postgres' }, encoding: 'utf8' },
+    counts[table] = Number(
+      psql(`SELECT count(*) FROM "${WORKSPACE_SCHEMA}"."${table}" WHERE "deletedAt" IS NULL;`),
     );
-    counts[table] = Number(out.trim());
+    counts[`${table}.updated`] = Number(
+      psql(
+        `SELECT count(*) FROM "${WORKSPACE_SCHEMA}"."${table}" WHERE "updatedAt" >= '${runStartIso}';`,
+      ),
+    );
   }
 
   return counts;
 };
 
-const fetchKnownPropertyNames = async (token: string): Promise<string[]> => {
-  const response = await fetch(`${SERVER_URL}/rest/properties?limit=60`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  const body = (await response.json()) as { data?: { properties?: Array<{ name?: string }> } };
+const fetchKnownPropertyNames = (): string[] => {
+  const names = psql(
+    `SELECT name FROM "${WORKSPACE_SCHEMA}"."_property" WHERE "deletedAt" IS NULL AND name <> '';`,
+  )
+    .split('\n')
+    .filter((name) => name.length > 0);
+  if (names.length === 0) {
+    throw new Error('bilinen portföy adı listesi boş — halüsinasyon kontrolü çalışamaz');
+  }
 
-  return (body.data?.properties ?? [])
-    .map((property) => property.name)
-    .filter((name): name is string => typeof name === 'string' && name.length > 0);
+  return names;
 };
 
 const extractAnswerText = (result: unknown): string => {
@@ -115,14 +136,19 @@ const extractAnswerText = (result: unknown): string => {
 };
 
 const run = async (): Promise<void> => {
+  const runStart = new Date();
+  const runStartIso = runStart.toISOString();
   const token = await getToken();
-  const knownNames = await fetchKnownPropertyNames(token);
-  const countsBefore = countRecords();
+  const knownNames = fetchKnownPropertyNames();
+  const countsBefore = countRecords(runStartIso);
+  const agentModelId = psql(
+    `SELECT "modelId" FROM core.agent WHERE name='emlak-asistani' AND "deletedAt" IS NULL LIMIT 1;`,
+  );
 
   const lines: string[] = [
-    `# Sohbet asistanı değerlendirmesi — ${new Date().toISOString().slice(0, 16)} — ${MODEL_LABEL}`,
+    `# Sohbet asistanı değerlendirmesi — ${runStartIso.slice(0, 16)} — ${MODEL_LABEL}`,
     '',
-    `Senaryo sayısı: ${EVAL_SCENARIOS.length} · Bilinen portföy adı: ${knownNames.length}`,
+    `Senaryo sayısı: ${EVAL_SCENARIOS.length} · Bilinen portföy adı: ${knownNames.length} · Ajan modeli: ${agentModelId}`,
     '',
   ];
   let automatedFailures = 0;
@@ -155,14 +181,24 @@ const run = async (): Promise<void> => {
   for (const scenario of EVAL_SCENARIOS) {
     process.stdout.write(`[${scenario.id}] ${scenario.prompt.slice(0, 50)}... `);
     const started = Date.now();
-    const response = await runScenario(scenario.prompt);
-
-    const data = (response as { data?: { runAgent?: { success: boolean; result: unknown; error: string | null } } }).data;
-    const errors = (response as { errors?: Array<{ message: string }> }).errors;
-    const answer = data?.runAgent?.success
-      ? extractAnswerText(data.runAgent.result)
-      : `HATA: ${data?.runAgent?.error ?? errors?.[0]?.message ?? 'bilinmiyor'}`;
-    const failures = checkAnswer(scenario, answer, knownNames);
+    let answer: string;
+    let failures: string[];
+    try {
+      const response = await runScenario(scenario.prompt);
+      const data = (response as { data?: { runAgent?: { success: boolean; result: unknown; error: string | null } } }).data;
+      const errors = (response as { errors?: Array<{ message: string }> }).errors;
+      if (data?.runAgent?.success === true) {
+        answer = extractAnswerText(data.runAgent.result);
+        failures = checkAnswer(scenario, answer, knownNames);
+      } else {
+        // a failed call must never read as a clean scenario
+        answer = `HATA: ${data?.runAgent?.error ?? errors?.[0]?.message ?? 'bilinmiyor'}`;
+        failures = ['ajan çağrısı başarısız — senaryo koşulamadı'];
+      }
+    } catch (error) {
+      answer = `HATA (istisna): ${error instanceof Error ? error.message : String(error)}`;
+      failures = ['ajan çağrısı başarısız — senaryo koşulamadı'];
+    }
     automatedFailures += failures.length > 0 ? 1 : 0;
     console.log(`${Date.now() - started}ms${failures.length > 0 ? ' ⚠' : ''}`);
 
@@ -184,19 +220,25 @@ const run = async (): Promise<void> => {
     );
   }
 
-  const countsAfter = countRecords();
-  const writes = COUNTED_TABLES.filter((t) => countsAfter[t] !== countsBefore[t]);
+  const countsAfter = countRecords(runStartIso);
+  const writes = Object.keys(countsBefore).filter(
+    (key) => countsAfter[key] !== countsBefore[key],
+  );
   lines.push(
     '---',
     '',
-    `**Yazma denetimi:** ${writes.length === 0 ? 'YOK — hiçbir kayıt sayısı değişmedi ✓' : `VAR ❌ → ${writes.map((t) => `${t}: ${countsBefore[t]}→${countsAfter[t]}`).join(', ')}`}`,
+    `**Yazma denetimi:** ${writes.length === 0 ? 'YOK — kayıt sayıları ve updatedAt değişmedi ✓' : `VAR ❌ → ${writes.map((t) => `${t}: ${countsBefore[t]}→${countsAfter[t]}`).join(', ')}`}`,
     `**Otomatik kontrol uyarısı olan senaryo:** ${automatedFailures}/${EVAL_SCENARIOS.length}`,
     '',
   );
 
   const outDir = path.join(__dirname, '..', 'evals', 'chat-assistant', 'results');
   mkdirSync(outDir, { recursive: true });
-  const outPath = path.join(outDir, `${new Date().toISOString().slice(0, 10)}-${MODEL_LABEL}.md`);
+  // minute-stamped so a rerun never overwrites a human-annotated report
+  const outPath = path.join(
+    outDir,
+    `${runStartIso.slice(0, 16).replace(':', '')}-${MODEL_LABEL}.md`,
+  );
   writeFileSync(outPath, lines.join('\n'));
   console.log(`\nrapor: ${outPath}`);
 };

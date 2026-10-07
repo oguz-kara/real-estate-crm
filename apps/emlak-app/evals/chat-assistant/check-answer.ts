@@ -1,8 +1,14 @@
 import { type EvalScenario } from './scenario.type';
 
 // Turkish casing: 'İ'.toLowerCase() → 'i̇' vs 'I'.toLowerCase() → 'ı', so a
-// plain toLowerCase comparison misses KESİNLİKLE vs kesinlikle.
-const normalize = (text: string): string => text.toLocaleLowerCase('tr-TR');
+// plain toLowerCase comparison misses KESİNLİKLE vs kesinlikle. Markdown
+// emphasis and line wraps inside a property name would otherwise defeat the
+// substring match, so formatting characters and whitespace runs collapse too.
+const normalize = (text: string): string =>
+  text
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[*_`]/g, '')
+    .replace(/\s+/g, ' ');
 
 // Automated guardrail flags only — the written pass definition is judged by
 // a human on the report. A failure here is a hard red flag, not the verdict.

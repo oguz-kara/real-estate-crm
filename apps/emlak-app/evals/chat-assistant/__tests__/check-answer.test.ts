@@ -58,4 +58,19 @@ describe('checkAnswer', () => {
       checkAnswer(scenario, 'Bu kriterlere uyan kayıt bulamadım.', knownNames),
     ).toEqual([]);
   });
+
+  test('markdown emphasis and line wraps inside the name cannot hide it', () => {
+    const scenario: EvalScenario = {
+      ...BASE,
+      checks: { portfoyAdiGecmemeli: true },
+    };
+    const knownNames = ["DOĞA DOSTU'ndan FIRSAT! EGE ÜNİV. ve METRO YANI 3+1"];
+    expect(
+      checkAnswer(
+        scenario,
+        "Listede: DOĞA DOSTU'ndan **FIRSAT!** EGE ÜNİV.\nve METRO YANI 3+1 var",
+        knownNames,
+      ),
+    ).toHaveLength(1);
+  });
 });
