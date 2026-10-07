@@ -33,8 +33,14 @@ export const RAW_EXTRACTION_KEYS: readonly (keyof RawExtraction)[] = [
 
 const toRecord = (value: unknown): Record<string, unknown> | null => {
   if (typeof value === 'string') {
+    // Models often wrap the object in a ```json fence or a sentence.
+    const start = value.indexOf('{');
+    const end = value.lastIndexOf('}');
+    if (start === -1 || end <= start) {
+      return null;
+    }
     try {
-      return toRecord(JSON.parse(value));
+      return toRecord(JSON.parse(value.slice(start, end + 1)));
     } catch {
       return null;
     }

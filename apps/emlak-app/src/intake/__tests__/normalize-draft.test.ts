@@ -167,4 +167,10 @@ describe('parseRawExtraction', () => {
   test('parses a JSON string', () => {
     expect(parseRawExtraction('{"category":"ARSA"}')?.category).toBe('ARSA');
   });
+
+  test('parses a json object wrapped in a code fence or prose', () => {
+    expect(parseRawExtraction('```json\n{"category":"ARSA"}\n```')?.category).toBe('ARSA');
+    expect(parseRawExtraction('Sonuç: {"listingType":"KIRALIK"} tamam')?.listingType).toBe('KIRALIK');
+    expect(parseRawExtraction('json yok')).toBeNull();
+  });
 });
