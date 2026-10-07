@@ -10,7 +10,14 @@ describe('izmir districts', () => {
     expect(canonicalizeDistrict('Gümüldür')).toBe('Menderes');
     expect(canonicalizeDistrict('Mordoğan')).toBe('Karaburun');
     expect(canonicalizeDistrict('Bornova')).toBe('Bornova');
-    expect(canonicalizeDistrict('Brnv')).toBeNull();
     expect(canonicalizeDistrict('İstanbul')).toBeNull();
+  });
+
+  test('resolves vowel-less notebook abbreviations only when unambiguous', () => {
+    expect(canonicalizeDistrict('Brnv')).toBe('Bornova');
+    expect(canonicalizeDistrict('Krşyk')).toBe('Karşıyaka');
+    expect(canonicalizeDistrict('BRNV')).toBe('Bornova');
+    expect(canonicalizeDistrict('xyz')).toBeNull();
+    expect(canonicalizeDistrict('k')).toBeNull();
   });
 });
