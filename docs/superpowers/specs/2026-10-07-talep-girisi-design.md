@@ -217,3 +217,15 @@ Başarı:
 - `apps/emlak-app/evals/talep-cikarimi/*`, `scripts/run-intake-eval.ts`,
   `package.json` (`eval:intake`)
 - `docs/HANDOFF.md` (özellik notu), `locales/tr-TR.json`
+
+## Uygulama notları (plan yazımında saptanan sapmalar)
+
+1. Twenty `AgentResponseSchema` düz nesnedir ve yalnızca `string|number|boolean`
+   özellik kabul eder (dizi/iç nesne yok). Çıkarım ajanı tüm alanları **string**
+   döndürür (boş string = yok); dizi, tutar ve para birimi ayrıştırmasını kod
+   tarafındaki `normalizeDraft` yapar. "Kod doğrular, LLM'e güvenilmez" ilkesi
+   böylece daha da sıkılaşır.
+2. Yeni alanların API adları mevcut `buyerRequest` alanlarıyla tutarlı olarak
+   İngilizcedir: `kaynak` → `source` (etiket "Kaynak"), `kaynakMetin` →
+   `sourceText` ("Kaynak Metin"), `cikarimDetayi` → `extraction` ("Çıkarım
+   Detayı"). Rota gövdesinde de `source` kullanılır. Etiketler Türkçe kalır.
