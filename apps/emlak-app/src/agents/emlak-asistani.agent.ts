@@ -27,7 +27,7 @@ export default defineAgent({
     'Salt okunur Türkçe CRM asistanı: portföy, talep ve eşleşme sorularını ' +
     'kayıtlı veriden cevaplar; kayıt değiştiremez.',
   prompt: EMLAK_ASISTANI_PROMPT,
-  modelId: 'deepseek/deepseek-v4-pro',
+  modelId: 'deepseek/deepseek-flash',
   responseFormat: { type: 'text' },
   roleUniversalIdentifier: ASISTAN_OKUR_ROLE_UNIVERSAL_IDENTIFIER,
 });
