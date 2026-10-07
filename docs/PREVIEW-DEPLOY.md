@@ -29,18 +29,21 @@ Script iki tünel açar (server 3000 + front 3001) ve üç env değerini çeviri
    `"Bash(bash packages/twenty-utils/preview-deploy.sh*)"` duruyor
    (owner'ın "kural ekle" talimatıyla eklendi). Script artık izin
    engeline takılmıyor.
-2. **Konteyner ağ politikası** (ŞU AN ENGELLİ): cloudflared quick tunnel
-   kayıt olabiliyor (URL üretiliyor) ama edge veri bağlantısı
-   `*.argotunnel.com` adresine **7844 portundan** (QUIC/UDP ve HTTP2/TCP)
-   gider — cloud ortamının ağ politikası 443 dışını kesiyor, tünel 530
-   döner. Çare: oturum başlığındaki ortam menüsü → Edit → **Network
-   access** seviyesini genişletmek (veya Allowed domains'e
-   `*.argotunnel.com` eklemek; proxy yalnızca 443'e izin veriyorsa bu da
-   yetmeyebilir — o durumda tek yol daha geniş ağ seviyesidir).
-   Owner ayarı değiştirdikten sonra "kısa süreli deploy et" yeter.
+2. **Konteyner ağ mimarisi** (YAPISAL ENGEL, 2026-10-07'de doğrulandı):
+   cloudflared quick tunnel kayıt olabiliyor (URL üretiliyor, 443/HTTPS
+   proxy üzerinden) ama edge veri bağlantısı `*.argotunnel.com` adresine
+   **7844 portundan** (QUIC/UDP ve HTTP2/TCP) gider. Bu konteynerde TÜM
+   dış trafik bir HTTPS proxy'den (yalnızca 443) akar ve ortamın Network
+   access ayarı **Full iken bile** 7844 kapalıdır — ayar değil, mimari.
+   Yani cloudflared quick tunnel BU ORTAMDA ÇALIŞMAZ; tekrar denemek
+   boşunadır.
 
-Ağ da açılamazsa bu yol bu ortamda kapalıdır; alternatif gerçek kısa
-süreli deploy'dur (Railway/Render — ayrı iş).
+Alternatifler (owner kararı gerekir):
+- **ngrok**: ajan bağlantısını 443/TLS üzerinden kurar ve HTTP proxy
+  destekler, yani bu konteynerde çalışması beklenir. Ücretsiz hesap +
+  authtoken gerekir (token owner'dan alınır, .env gibi git dışında
+  tutulur). Script ngrok'a uyarlanır.
+- **Railway/Render**: gerçek kısa süreli deploy — ayrı, daha büyük iş.
 
 ## Güvenlik gerçekleri (owner bunları kabul etti: 2026-10-07)
 
