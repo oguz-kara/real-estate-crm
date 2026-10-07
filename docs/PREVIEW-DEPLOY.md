@@ -38,12 +38,19 @@ Script iki tünel açar (server 3000 + front 3001) ve üç env değerini çeviri
    Yani cloudflared quick tunnel BU ORTAMDA ÇALIŞMAZ; tekrar denemek
    boşunadır.
 
-Alternatifler (owner kararı gerekir):
-- **ngrok**: ajan bağlantısını 443/TLS üzerinden kurar ve HTTP proxy
-  destekler, yani bu konteynerde çalışması beklenir. Ücretsiz hesap +
-  authtoken gerekir (token owner'dan alınır, .env gibi git dışında
-  tutulur). Script ngrok'a uyarlanır.
-- **Railway/Render**: gerçek kısa süreli deploy — ayrı, daha büyük iş.
+**ngrok da ELENDİ (2026-10-07):** konteynerin proxy dokümantasyonu
+(`/root/.ccr/README.md`) sertifika pinleyen istemcileri ve ngrok'u İSMEN
+"proxy üzerinden desteklenmez; dolanma, raporla" listesine koyuyor (proxy
+TLS'i yeniden sonlandırır, ngrok ajanı pinleme yüzünden reddeder).
+WebSocket upgrade ve 443 dışı portlar da desteklenmediğinden tünel
+tabanlı HİÇBİR çözüm (cloudflared, ngrok, SSH/localtunnel türevleri) bu
+konteynerde çalışmaz. SONUÇ: konteyner içinden herkese açık önizleme
+MÜMKÜN DEĞİL; bu dosyadaki script yalnızca yerel (kendi makinende
+çalışan) ortamlar için anlamlıdır.
+
+Kalan gerçek yol: **Railway/Render** üzerinde kısa süreli gerçek deploy
+(build onların altyapısında GitHub'dan çekilir, konteyner ağına takılmaz)
+— ayrı, daha büyük iş; owner isterse kendi spec'iyle planlanır.
 
 ## Güvenlik gerçekleri (owner bunları kabul etti: 2026-10-07)
 
