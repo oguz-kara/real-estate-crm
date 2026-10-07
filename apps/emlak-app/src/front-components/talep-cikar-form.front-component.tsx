@@ -12,7 +12,7 @@ import {
 
 import { INTAKE_MIN_TEXT_LENGTH } from 'src/constants/intake-limits';
 import { TALEP_CIKAR_FORM_FRONT_COMPONENT_UNIVERSAL_IDENTIFIER } from 'src/constants/intake-ids';
-import { canSubmitIntake, intakeSuccessMessage, selectionHint } from 'src/intake/intake-form-state';
+import { canSubmitIntake, selectionHint, submitIntake } from 'src/intake/intake-form-state';
 import type { IntakeResult, IntakeSource } from 'src/intake/run-intake';
 
 // CSS variables instead of twenty-ui imports: the SDK mocks the UI package
@@ -147,24 +147,23 @@ const TalepCikarForm = () => {
       return;
     }
     setSubmitting(true);
-    try {
-      const result = await new RestApiClient().post<IntakeResult>('/s/talep/cikar', {
-        personId,
-        text,
-        ...(source === '' ? {} : { source }),
-      });
-      await enqueueSnackbar({
-        message: intakeSuccessMessage(result),
-        variant: result.outcome === 'ok' ? 'success' : 'warning',
-      });
-      await openSidePanelPage({
-        page: SidePanelPages.ViewRecord,
-        recordId: result.draftId,
-        objectNameSingular: 'buyerRequest',
-      });
-    } catch {
-      // the text stays in the form so nothing typed is lost
-      await enqueueSnackbar({ message: 'Taslak oluşturulamadı, tekrar deneyin.', variant: 'error' });
+    const outcome = await submitIntake({
+      post: () =>
+        new RestApiClient().post<IntakeResult>('/s/talep/cikar', {
+          personId,
+          text,
+          ...(source === '' ? {} : { source }),
+        }),
+      notify: (message, variant) => enqueueSnackbar({ message, variant }),
+      openDraft: (draftId) =>
+        openSidePanelPage({
+          page: SidePanelPages.ViewRecord,
+          recordId: draftId,
+          objectNameSingular: 'buyerRequest',
+        }),
+    });
+    // after a created draft the button stays disabled so it cannot be sent twice
+    if (outcome === 'failed') {
       setSubmitting(false);
     }
   };

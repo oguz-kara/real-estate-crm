@@ -2,13 +2,13 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { checkDraft, type DraftRecord } from '../evals/talep-cikarimi/check-draft';
+import { parseEvalArgs } from '../evals/talep-cikarimi/parse-eval-args';
 import { INTAKE_SCENARIOS } from '../evals/talep-cikarimi/scenarios';
 import { countRecords, getToken, graphql, psql, refreshToken, SERVER_URL, WORKSPACE_SCHEMA } from './eval-shared';
 
-const args = process.argv.slice(2);
-const onlyIndex = args.indexOf('--only');
-const ONLY_IDS = onlyIndex === -1 ? null : new Set((args[onlyIndex + 1] ?? '').split(','));
-const MODEL_LABEL = args.find((arg, index) => !arg.startsWith('--') && index !== onlyIndex + 1) ?? 'deepseek-flash';
+const EVAL_ARGS = parseEvalArgs(process.argv.slice(2));
+const ONLY_IDS = EVAL_ARGS.onlyIds === null ? null : new Set(EVAL_ARGS.onlyIds);
+const MODEL_LABEL = EVAL_ARGS.label;
 const COUNTED_TABLES = ['person', '_property', '_buyerRequest', '_propertyMatch', 'task', 'taskTarget', 'note'];
 // The eval itself creates and then soft-deletes drafts, their review tasks
 // and (on a first run) the fake customer; anything else changing is a bug.

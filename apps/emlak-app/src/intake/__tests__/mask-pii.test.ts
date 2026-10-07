@@ -22,6 +22,14 @@ describe('maskPii', () => {
     expect(result.maskedText).toBe('Bornova 3+1, bütçe 4.150.000 TL, 120 m², 1.200.000 euro');
   });
 
+  test('masks Turkish national ID numbers and IBANs', () => {
+    const result = maskPii('TC 34567890123, IBAN TR33 0006 1005 1978 6457 8413 26 gönderdi', AHMET);
+    expect(result.maskedText).toBe('TC [KIMLIK_1], IBAN [IBAN_1] gönderdi');
+    expect(result.leak).toBe(false);
+    expect(containsPii('TC 34567890123', AHMET)).toBe(true);
+    expect(containsPii('TR330006100519786457841326', AHMET)).toBe(true);
+  });
+
   test('masks emails', () => {
     const result = maskPii('mail ahmet.y+ev@example.com.tr yeter', AHMET);
     expect(result.maskedText).toBe('mail [EPOSTA_1] yeter');

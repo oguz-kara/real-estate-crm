@@ -34,7 +34,7 @@ export const CRITERIA_FIELDS = [
   'sqmNetMin',
 ] as const;
 
-const LIST_SEPARATOR = /\s*(?:,|;|\/|\s+ve\s+|\s+veya\s+|\s+ya\s+da\s+|\s+yada\s+)\s*/i;
+const LIST_SEPARATOR = /\s*(?:,|;|\/|\s-\s|(?<=\p{L})-(?=\p{L})|\s+ve\s+|\s+veya\s+|\s+ya\s+da\s+|\s+yada\s+)\s*/iu;
 
 const splitList = (text: string): string[] =>
   text
@@ -95,40 +95,79 @@ const toCurrencyCode = (hint: string | undefined): CurrencyCode | null => {
   return upper === 'TRY' || upper === 'EUR' || upper === 'USD' ? upper : null;
 };
 
-const parseDigitAmount = (folded: string): { amount: number; hasMultiplier: boolean } | null => {
-  const match = folded.match(/(\d+(?:[.,]\d+)*)\s*(milyar|milyon|mio|m|bin|k)?(?![a-z])/);
-  if (match === null) {
-    return null;
-  }
-  const [, digits, multiplierWord] = match;
+// Long multiplier words keep Turkish case suffixes ("7 milyona kadar",
+// "20 binden fazla"); the short forms must stand alone so "5 metre" is not
+// five million.
+const AMOUNT_PATTERN = /(\d+(?:[.,]\d+)*)\s*(?:(milyar|milyon|bin)[a-z]{0,5}|(mio|m|k)(?![a-z]))?/g;
+
+const parseDigitGroup = (digits: string, multiplierWord: string | undefined): number => {
   const multiplier = multiplierWord === undefined ? 1 : MULTIPLIER_WORDS[multiplierWord];
   const isThousandsGrouped = /^\d{1,3}(?:[.,]\d{3})+$/.test(digits);
   const numeric =
     isThousandsGrouped && multiplierWord === undefined
       ? Number(digits.replace(/[.,]/g, ''))
       : Number(digits.replace(/\.(?=.*[.,])/g, '').replace(',', '.'));
-  if (!Number.isFinite(numeric)) {
+
+  return numeric * multiplier;
+};
+
+const parseDigitAmount = (folded: string): { amount: number; hasMultiplier: boolean } | null => {
+  const withHalves = folded.replace(/(\d+)\s*bucuk/g, '$1.5');
+  const groups = [...withHalves.matchAll(AMOUNT_PATTERN)].map((match) => {
+    const multiplierWord = match[2] ?? match[3];
+
+    return {
+      value: parseDigitGroup(match[1], multiplierWord),
+      multiplier: multiplierWord === undefined ? 1 : MULTIPLIER_WORDS[multiplierWord],
+    };
+  });
+  if (groups.length === 0 || !groups.every((group) => Number.isFinite(group.value))) {
     return null;
   }
+  // "5 milyon 500 bin" is one amount: keep adding while multipliers shrink.
+  let amount = groups[0].value;
+  let previousMultiplier = groups[0].multiplier;
+  for (const group of groups.slice(1)) {
+    if (previousMultiplier === 1 || group.multiplier >= previousMultiplier) {
+      break;
+    }
+    amount += group.value;
+    previousMultiplier = group.multiplier;
+  }
 
-  return { amount: Math.round(numeric * multiplier), hasMultiplier: multiplierWord !== undefined };
+  return { amount: Math.round(amount), hasMultiplier: groups[0].multiplier !== 1 };
 };
 
 // Speech-to-text writes amounts as words ("yüz yirmi bin dolar").
+const wordMultiplier = (word: string): number | null => {
+  if (word.startsWith('milyar')) {
+    return MULTIPLIER_WORDS.milyar;
+  }
+  if (word.startsWith('milyon')) {
+    return MULTIPLIER_WORDS.milyon;
+  }
+
+  return /^bin[a-z]{0,4}$/.test(word) && word !== 'bina' ? MULTIPLIER_WORDS.bin : null;
+};
+
 const parseWordAmount = (folded: string): { amount: number; hasMultiplier: boolean } | null => {
   let total = 0;
   let current = 0;
   let sawNumber = false;
   let hasMultiplier = false;
   for (const word of folded.split(/[^a-z]+/)) {
+    const multiplier = wordMultiplier(word);
     if (word in NUMBER_WORDS) {
       current += NUMBER_WORDS[word];
+      sawNumber = true;
+    } else if (word === 'yarim' || word === 'bucuk') {
+      current += 0.5;
       sawNumber = true;
     } else if (word === 'yuz') {
       current = (current === 0 ? 1 : current) * 100;
       sawNumber = true;
-    } else if (word === 'bin' || word === 'milyon' || word === 'milyar') {
-      total += (current === 0 ? 1 : current) * MULTIPLIER_WORDS[word];
+    } else if (multiplier !== null) {
+      total += (current === 0 ? 1 : current) * multiplier;
       current = 0;
       sawNumber = true;
       hasMultiplier = true;
@@ -138,7 +177,7 @@ const parseWordAmount = (folded: string): { amount: number; hasMultiplier: boole
     return null;
   }
 
-  return { amount: total + current, hasMultiplier };
+  return { amount: Math.round(total + current), hasMultiplier };
 };
 
 export const parseAmount = (
@@ -194,11 +233,19 @@ export const parseRooms = (text: string): string[] => {
       codes.push(code);
     }
   }
-  if (codes.length === 0 && /oda/.test(folded)) {
-    for (const match of folded.matchAll(/(?<![\d+])(\d+)(?![\d+])/g)) {
-      const code = roomCode(Number(match[1]), 1);
-      if (code !== null) {
-        codes.push(code);
+  // Without an "N+M" form only numbers that directly precede "oda" count:
+  // "4 veya 5 oda" yes, the 120 of "120 m2" or the 2 of "2 banyo" never.
+  if (codes.length === 0) {
+    const roomLists = folded.matchAll(
+      /((?:\d+\s*(?:,|\/|-|veya|ya da|yada|ile|ve)\s*)*\d+)\s*oda/g,
+    );
+    for (const roomList of roomLists) {
+      for (const number of roomList[1].match(/\d+/g) ?? []) {
+        const rooms = Number(number);
+        const code = rooms >= 1 && rooms <= 12 ? roomCode(rooms, 1) : null;
+        if (code !== null) {
+          codes.push(code);
+        }
       }
     }
   }
@@ -206,14 +253,20 @@ export const parseRooms = (text: string): string[] => {
   return unique(codes);
 };
 
+const stripDistrictNoise = (folded: string): string =>
+  folded
+    .replace(/['’`][a-z]*/g, '')
+    .replace(/^izmir\b\s*/, '')
+    .trim();
+
 export const canonicalizeDistricts = (
   text: string,
 ): { districts: string[]; unmapped: string[] } => {
   const districts: string[] = [];
   const unmapped: string[] = [];
   for (const part of splitList(text)) {
-    const folded = foldTurkish(part);
-    if (folded === 'izmir') {
+    const folded = stripDistrictNoise(foldTurkish(part));
+    if (folded === '') {
       continue;
     }
     const district = canonicalizeDistrict(part);
@@ -267,8 +320,15 @@ export const mapAmenities = (text: string): { values: string[]; unmapped: string
   const unmapped: string[] = [];
   for (const part of splitList(text)) {
     const folded = foldTurkish(part);
-    const alias = AMENITY_ALIASES.find(([key]) => folded.includes(key));
-    if (alias !== undefined && AMENITY_CODES.has(alias[1])) {
+    const words = folded.split(/[^a-z]+/);
+    // "asansörsüz" is the absence of the amenity and "bahçe katı" is a
+    // floor, not a garden; both stay with the human reviewer.
+    const isNegatedOrFloor = words.some((word) => /(siz|suz)$/.test(word) || word === 'kat' || word === 'kati');
+    const isSharedPool = words.includes('site') && folded.includes('havuz');
+    const alias = isSharedPool
+      ? (['site havuz', 'YUZME_HAVUZU'] as const)
+      : AMENITY_ALIASES.find(([key]) => new RegExp(`(^|[^a-z])${key}`).test(folded));
+    if (!isNegatedOrFloor && alias !== undefined && AMENITY_CODES.has(alias[1])) {
       values.push(alias[1]);
     } else {
       unmapped.push(part);

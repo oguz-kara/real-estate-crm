@@ -24,6 +24,11 @@ const EMAIL_PATTERN = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 const PHONE_PATTERN =
   /(?<![\d+])(?:(?:\+|00)90[\s.-]?)?\(?0?[2-5]\d{2}\)?[\s.-]?\d{3}[\s.-]?\d{2}[\s.-]?\d{2}(?!\d)/g;
 
+// TC kimlik numbers never start with 0, which keeps "05324567890" a phone.
+const NATIONAL_ID_PATTERN = /(?<!\d)[1-9]\d{10}(?!\d)/g;
+
+const IBAN_PATTERN = /\bTR\d{2}(?:\s?\d{4}){5}\s?\d{2}\b/gi;
+
 const DIGIT_RUN_PATTERN = /\d[\d\s.()-]{8,}\d/g;
 
 const nationalDigits = (phone: string): string | null => {
@@ -88,7 +93,11 @@ export const containsPii = (text: string, person: PersonIdentity): boolean => {
   if (new RegExp(EMAIL_PATTERN.source).test(text)) {
     return true;
   }
-  if (new RegExp(PHONE_PATTERN.source).test(text)) {
+  if (
+    [PHONE_PATTERN, NATIONAL_ID_PATTERN, IBAN_PATTERN].some((pattern) =>
+      new RegExp(pattern.source, pattern.flags.replace('g', '')).test(text),
+    )
+  ) {
     return true;
   }
   if (containsPersonPhone(text, person)) {
@@ -102,8 +111,16 @@ export const containsPii = (text: string, person: PersonIdentity): boolean => {
 export const maskPii = (text: string, person: PersonIdentity): MaskResult => {
   let emailCount = 0;
   let phoneCount = 0;
+  let ibanCount = 0;
+  let nationalIdCount = 0;
   const withoutEmails = text.replace(EMAIL_PATTERN, () => `[EPOSTA_${++emailCount}]`);
-  const withoutPhones = withoutEmails.replace(PHONE_PATTERN, () => `[TELEFON_${++phoneCount}]`);
+  // IBANs go before phones so their digit groups are never read as numbers.
+  const withoutIbans = withoutEmails.replace(IBAN_PATTERN, () => `[IBAN_${++ibanCount}]`);
+  const withoutNumbers = withoutIbans.replace(PHONE_PATTERN, () => `[TELEFON_${++phoneCount}]`);
+  const withoutPhones = withoutNumbers.replace(
+    NATIONAL_ID_PATTERN,
+    () => `[KIMLIK_${++nationalIdCount}]`,
+  );
   const phoneDigits = personPhoneDigits(person);
   const withoutOwnPhones = withoutPhones.replace(DIGIT_RUN_PATTERN, (run) => {
     const digits = run.replace(/\D/g, '');

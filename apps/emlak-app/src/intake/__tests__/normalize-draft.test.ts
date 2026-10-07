@@ -46,6 +46,27 @@ describe('parseAmount', () => {
     expect(parseAmount(input)).toEqual(expected);
   });
 
+  test.each([
+    ['7 milyona kadar', 7_000_000],
+    ['2 milyona kadar', 2_000_000],
+    ['500 bine kadar', 500_000],
+    ['20 binden fazla', 20_000],
+    ['3 milyonu geçmesin', 3_000_000],
+    ['5 metre', null],
+  ])('parseAmount keeps Turkish case suffixes on multipliers: %s', (input, expected) => {
+    expect(parseAmount(input)?.amount ?? null).toBe(expected);
+  });
+
+  test.each([
+    ['yarım milyon', 500_000],
+    ['bir buçuk milyon', 1_500_000],
+    ['iki buçuk milyon', 2_500_000],
+    ['1 buçuk milyon', 1_500_000],
+    ['5 milyon 500 bin', 5_500_000],
+  ])('parseAmount reads spoken halves and compound amounts: %s', (input, expected) => {
+    expect(parseAmount(input)?.amount ?? null).toBe(expected);
+  });
+
   test('uses the currency hint when the text has none', () => {
     expect(parseAmount('1.2 milyon', 'EUR')).toEqual({ amount: 1_200_000, currency: 'EUR' });
   });
@@ -58,6 +79,14 @@ describe('parseRooms', () => {
     expect(parseRooms('üç artı bir')).toEqual(['R3_1']);
     expect(parseRooms('7+2')).toEqual(['R7_PLUS']);
     expect(parseRooms('')).toEqual([]);
+  });
+
+  test('only counts numbers that directly precede "oda"', () => {
+    expect(parseRooms('4 odalı 120 m2')).toEqual(['R4_1']);
+    expect(parseRooms('2 oda 1 salon')).toEqual(['R2_1']);
+    expect(parseRooms('3 oda 2 banyo')).toEqual(['R3_1']);
+    expect(parseRooms('en az 3 oda, 10. kat')).toEqual(['R3_1']);
+    expect(parseRooms('4 oda, 5 oda')).toEqual(['R4_1', 'R5_1']);
   });
 });
 
@@ -77,6 +106,14 @@ describe('canonicalizeDistricts', () => {
     });
     expect(canonicalizeDistricts('Erzene')).toEqual({ districts: [], unmapped: ['Erzene'] });
   });
+
+  test('handles case suffixes, a leading İzmir and hyphenated pairs', () => {
+    expect(canonicalizeDistricts("Çeşme'de").districts).toEqual(['Çeşme']);
+    expect(canonicalizeDistricts("Bornova'da, Urla'ya").districts).toEqual(['Bornova', 'Urla']);
+    expect(canonicalizeDistricts('bornovada').districts).toEqual(['Bornova']);
+    expect(canonicalizeDistricts('İzmir Çeşme')).toEqual({ districts: ['Çeşme'], unmapped: [] });
+    expect(canonicalizeDistricts('Çeşme-Alaçatı')).toEqual({ districts: ['Çeşme'], unmapped: ['Alaçatı'] });
+  });
 });
 
 describe('mapAmenities', () => {
@@ -89,6 +126,21 @@ describe('mapAmenities', () => {
       values: ['ASANSOR', 'KAPALI_OTOPARK'],
       unmapped: [],
     });
+  });
+});
+
+describe('mapAmenities negation and compounds', () => {
+  test('does not turn "without" forms or floor names into the amenity', () => {
+    expect(mapAmenities('bahçe katı')).toEqual({ values: [], unmapped: ['bahçe katı'] });
+    expect(mapAmenities('asansörsüz')).toEqual({ values: [], unmapped: ['asansörsüz'] });
+    expect(mapAmenities('zemin kat')).toEqual({ values: [], unmapped: ['zemin kat'] });
+  });
+
+  test('a pool in a site is the shared pool, not a private one', () => {
+    expect(mapAmenities('havuzlu site').values).toEqual(['YUZME_HAVUZU']);
+    expect(mapAmenities('site içinde havuz').values).toEqual(['YUZME_HAVUZU']);
+    expect(mapAmenities('havuzlu').values).toEqual(['MUSTAKIL_HAVUZLU']);
+    expect(mapAmenities('bahçeli').values).toEqual(['BAHCE']);
   });
 });
 

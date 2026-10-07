@@ -291,13 +291,21 @@ export const runIntake = async (
     throw new Error('createBuyerRequest returned no id');
   }
 
-  await createReviewTask(client, {
-    draftId,
-    personId,
-    personName: personName ?? 'Talep',
-    missingFields,
-    nowIso,
-  });
+  // The draft already exists and shows up in the approval view; failing the
+  // call now would make the user retry and create a duplicate.
+  try {
+    await createReviewTask(client, {
+      draftId,
+      personId,
+      personName: personName ?? 'Talep',
+      missingFields,
+      nowIso,
+    });
+  } catch (error) {
+    console.warn(
+      `review task for draft ${draftId} could not be created: ${error instanceof Error ? error.message : 'unknown error'}`,
+    );
+  }
 
   return { draftId, missingFields, summary: buildSummary(draft), outcome };
 };

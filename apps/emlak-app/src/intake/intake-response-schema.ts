@@ -14,7 +14,8 @@ const PROPERTY_DESCRIPTIONS: Record<keyof RawExtraction, string> = {
     'KONUT | ISYERI | ARSA | BINA | DEVREMULK | TURISTIK_TESIS kodlarından biri; metin söylemiyorsa boş',
   listingType: 'SATILIK | KIRALIK | DEVREN_SATILIK | DEVREN_KIRALIK kodlarından biri; metin söylemiyorsa boş',
   rooms: "Virgülle ayrılmış oda planları, ör. '3+1, 4+1'; boş olabilir",
-  districts: 'Virgülle ayrılmış İzmir ilçe/mahalle adları, metinde geçtiği gibi',
+  districts:
+    'Virgülle ayrılmış İzmir ilçe/mahalle adları, metinde geçtiği gibi; kısaltılmış veya hatalı yazılmış yer adları da buraya yazılır, düzeltmeye çalışma',
   features: 'Virgülle ayrılmış, istenen kısa Türkçe özellik ifadeleri, metinde geçtiği gibi',
   excludedFeatures: 'Virgülle ayrılmış, istenmeyen kısa Türkçe özellik ifadeleri, metinde geçtiği gibi',
   budgetMin: "Alt bütçe tutar ifadesi metindeki gibi, ör. '30 bin'; yoksa boş",

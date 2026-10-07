@@ -77,20 +77,43 @@ const districtFromAbbreviation = (folded: string): string | null => {
   return candidates.length === 1 ? candidates[0] : null;
 };
 
+// Turkish case endings people append without an apostrophe ("bornovada").
+const CASE_SUFFIXES = ['', 'a', 'e', 'i', 'u', 'da', 'de', 'ta', 'te', 'ya', 'ye', 'yi', 'yu', 'dan', 'den', 'tan', 'ten', 'daki', 'deki', 'taki', 'teki', 'in', 'un', 'nin', 'nun'];
+
+const lookupWord = (word: string): string | null => {
+  for (const suffix of CASE_SUFFIXES) {
+    if (suffix !== '' && !word.endsWith(suffix)) {
+      continue;
+    }
+    const stem = word.slice(0, word.length - suffix.length);
+    const district = DISTRICT_BY_FOLDED.get(stem) ?? DISTRICT_ALIASES[stem];
+    if (district !== undefined && DISTRICT_BY_FOLDED.has(foldTurkish(district))) {
+      return district;
+    }
+  }
+
+  return null;
+};
+
 export const canonicalizeDistrict = (input: string): string | null => {
-  const folded = foldTurkish(input).trim().replace(/\s+/g, ' ');
-  if (folded === '') {
+  const folded = foldTurkish(input.replace(/['’`][\p{L}]*/gu, ''))
+    .trim()
+    .replace(/\s+/g, ' ');
+  const words = folded.split(' ').filter((word) => word !== '' && word !== 'izmir');
+  if (words.length === 0) {
     return null;
   }
-  const direct = DISTRICT_BY_FOLDED.get(folded);
-  if (direct !== undefined) {
+  const joined = words.join(' ');
+  const direct = DISTRICT_BY_FOLDED.get(joined) ?? DISTRICT_ALIASES[joined];
+  if (direct !== undefined && DISTRICT_BY_FOLDED.has(foldTurkish(direct))) {
     return direct;
   }
-  const alias = DISTRICT_ALIASES[folded];
-  if (alias !== undefined && DISTRICT_BY_FOLDED.has(foldTurkish(alias))) {
-    return alias;
+  for (const word of words) {
+    const district = lookupWord(word);
+    if (district !== null) {
+      return district;
+    }
   }
-  const [firstWord] = folded.split(' ');
 
-  return DISTRICT_BY_FOLDED.get(firstWord) ?? districtFromAbbreviation(folded);
+  return districtFromAbbreviation(joined);
 };

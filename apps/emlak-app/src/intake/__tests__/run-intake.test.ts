@@ -154,6 +154,27 @@ describe('runIntake', () => {
     expect(missing.mutations).toHaveLength(0);
   });
 
+  test('a failing review task does not hide the created draft', async () => {
+    const { client, mutations } = makeClient(AHMET_NODE);
+    const failingClient = {
+      ...client,
+      mutation: async (payload: Record<string, unknown>) => {
+        if ('createTask' in payload) {
+          throw new Error('task service down');
+        }
+
+        return client.mutation(payload);
+      },
+    };
+    const { runAgent } = makeRunAgent([textResponse(CESME_RAW)]);
+
+    const result = await runIntake(failingClient, runAgent, { personId: 'p1', text: TEXT }, NOW);
+
+    expect(result.draftId).toBe('draft-1');
+    expect(result.outcome).toBe('ok');
+    expect(mutations).toHaveLength(1);
+  });
+
   test('works for a person without a name: phones masked, task title uses "Talep"', async () => {
     const { client, mutations } = makeClient({ ...AHMET_NODE, name: { firstName: '', lastName: '' } });
     const { runAgent, prompts } = makeRunAgent([textResponse(CESME_RAW)]);
