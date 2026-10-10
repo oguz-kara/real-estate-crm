@@ -40,9 +40,12 @@ services:
         condition: service_healthy
     healthcheck:
       test: curl --fail http://localhost:3000/healthz
-      interval: 5s
+      # the first boot creates the whole database schema; on a small VPS that
+      # takes minutes, and failures during start_period do not count
+      start_period: 600s
+      interval: 10s
       timeout: 5s
-      retries: 30
+      retries: 10
     restart: always
 
   worker:
