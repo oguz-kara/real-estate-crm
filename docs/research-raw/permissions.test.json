@@ -1,0 +1,315 @@
+{
+  "test": "permissions",
+  "steps": [
+    {
+      "goal": "Pre-flight: disk, server health, check for existing PN artefacts",
+      "command": "df -h ~; curl http://localhost:3000/healthz; SELECTs on core.role / core.apiKey / core.agent for PN names",
+      "observed": "5.8 GiB free; healthz HTTP 200. Existing artefacts from other agents: role 'PN Hello World default function role', key 'pn-apps-key'. No PN Limited role, no pn-limited-* key or agent.",
+      "status": "pass",
+      "note": "No install was needed. Nothing belonging to other agents was touched."
+    },
+    {
+      "goal": "Log in as tim@apple.dev (step 1)",
+      "command": "POST /metadata getLoginTokenFromCredentials(email:\"tim@apple.dev\", password:<redacted>, origin:\"http://localhost:3002\"), then getAuthTokensFromLoginToken(loginToken:<redacted>)",
+      "observed": "HTTP 200 both times; access token expires 2026-10-03T15:34:40Z (about 30 min).",
+      "status": "pass",
+      "note": "Mistake: a head -c 300 of the raw login response printed the first ~200 chars of the short-lived LOGIN token before I redacted it. That token is single-use and had already been exchanged, so it is now useless."
+    },
+    {
+      "goal": "Gate: confirm the session is in the Apple workspace",
+      "command": "POST /metadata { currentWorkspace { displayName billingEntitlements { key value } hasValidSignedEnterpriseKey hasValidEnterpriseValidityToken } currentUser { email } }",
+      "observed": "HTTP 200: displayName \"Apple\", id 20202020-1c25-...ea419; all six billingEntitlements false (SSO, CUSTOM_DOMAIN, RLS, RECORD_SHARING, AUDIT_LOGS, USAGE_LIMIT); both enterprise booleans false.",
+      "status": "pass",
+      "note": "Gate passed, so the results below are about Apple."
+    },
+    {
+      "goal": "Find the Admin role id",
+      "command": "POST /metadata { getRoles { id label canBeAssignedToAgents canBeAssignedToApiKeys ... } }",
+      "observed": "HTTP 200: Admin 0b8af694-4400-4122-8e71-7bc1a61b1190 (agents false, apiKeys true); Object-restricted e9d6966f-... has canUpdateAllSettings true.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Create admin API key pn-admin-key (step 1)",
+      "command": "POST /metadata createApiKey(input:{name:\"pn-admin-key\", expiresAt:\"2027-12-31T00:00:00.000Z\", roleId:\"0b8af694-...\"}) with tim's session; then generateApiKeyToken(apiKeyId:\"f2ae6798-e5c6-493d-8e29-39f7fa7a3a7d\", expiresAt:...)",
+      "observed": "HTTP 200: key f2ae6798-e5c6-493d-8e29-39f7fa7a3a7d created with role Admin; token minted (<redacted>). Admin-key check: GraphQL people(first:1) HTTP 200 returned Jeffery Griffin.",
+      "status": "unexpected",
+      "note": "tim is only Object-restricted (not Admin) in Apple, yet he could mint an Admin-role API key. The ROLES flag (through canUpdateAllSettings) is enough, and nothing checks that the key's role is no stronger than the creator's."
+    },
+    {
+      "goal": "Create role PN Limited (step 2)",
+      "command": "POST /metadata createOneRole(createRoleInput:{label:\"PN Limited\", canUpdateAllSettings:false, canAccessAllTools:false, canReadAllObjectRecords:false, canUpdateAllObjectRecords:false, canSoftDeleteAllObjectRecords:false, canDestroyAllObjectRecords:false, canBeAssignedToUsers:false, canBeAssignedToAgents:true, canBeAssignedToApiKeys:true}) with admin key",
+      "observed": "HTTP 200: id f557b6ec-72c9-4006-81b4-f7f1c52a3076, all object booleans false.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Grant read-only on Company",
+      "command": "POST /metadata upsertObjectPermissions(upsertObjectPermissionsInput:{roleId:\"f557b6ec-...\", objectPermissions:[{objectMetadataId:\"fc225736-4a65-4308-9aaf-3b848b80b79b\", canReadObjectRecords:true, canUpdateObjectRecords:false, canSoftDeleteObjectRecords:false, canDestroyObjectRecords:false}]})",
+      "observed": "HTTP 200: one row returned, company read true, the other three false.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Make Company.domainName unreadable (step 2 and 6a: field-level permission)",
+      "command": "POST /metadata upsertFieldPermissions(upsertFieldPermissionsInput:{roleId:\"f557b6ec-...\", fieldPermissions:[{objectMetadataId:\"fc225736-...\", fieldMetadataId:\"88a4b80b-b747-4a9d-90d4-5e1aa5cd25d2\", canReadFieldValue:false, canUpdateFieldValue:false}]}); then getRoles",
+      "observed": "HTTP 200: fieldPermission d5d9fe38-eaa0-485c-807f-34812df9219e created. getRoles shows PN Limited with one objectPermission (company read) and one fieldPermission (domainName read false, update false).",
+      "status": "pass",
+      "note": "I picked domainName rather than address because it feeds company.searchVector (verified in pg_attrdef) and is the company image identifier, so it also tests the search side channel. Field-level permissions were accepted with no enterprise key, so they are not paywalled."
+    },
+    {
+      "goal": "Create pn-limited-key bound to PN Limited (step 3)",
+      "command": "POST /metadata createApiKey(input:{name:\"pn-limited-key\", expiresAt:\"2027-12-31T00:00:00.000Z\", roleId:\"f557b6ec-...\"}) with tim's session; generateApiKeyToken(apiKeyId:\"3c06c28f-7d26-4254-877b-4722db0883d8\", ...)",
+      "observed": "HTTP 200: key 3c06c28f-7d26-4254-877b-4722db0883d8, role PN Limited; token minted (<redacted>).",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "REST: read companies",
+      "command": "GET /rest/companies?limit=3 (Bearer <redacted limited key>)",
+      "observed": "HTTP 200. The domainName key is absent, but every record includes \"searchVector\":\"'housecall':1 'housecallpro.com':3 'pro':2\", which is the hidden domain value.",
+      "status": "unexpected",
+      "note": "The restriction leaks: the searchVector system field returns the restricted field's tokens."
+    },
+    {
+      "goal": "REST: read people and opportunities",
+      "command": "GET /rest/people?limit=1 ; GET /rest/opportunities?limit=1",
+      "observed": "Both HTTP 400 {\"statusCode\":400,\"error\":\"Error\",\"messages\":[\"Entity performing the request does not have permission\"],\"code\":\"PERMISSION_DENIED\"}",
+      "status": "unexpected",
+      "note": "Denied as predicted, but with status 400 rather than the 403 the research expected."
+    },
+    {
+      "goal": "REST: create, update and delete a company",
+      "command": "POST /rest/companies {\"name\":\"pn-should-not-exist-rest\"}; PATCH /rest/companies/20202020-a018-... {\"tagline\":...}; DELETE /rest/companies/20202020-a018-...",
+      "observed": "All HTTP 400 PERMISSION_DENIED \"Entity performing the request does not have permission\". SELECT confirms 0 pn-should* companies and the target unchanged.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "GraphQL: reads",
+      "command": "POST /graphql companies(first:2){id name}; companies{domainName{primaryLinkUrl}}; companies{searchVector}; people(first:1); opportunities(first:1)",
+      "observed": "id/name: HTTP 200 data. domainName: FORBIDDEN/PERMISSION_DENIED 'no permission to read field \"domainName\" on \"company\"'. searchVector: HTTP 200 with the domain tokens. people/opportunities: FORBIDDEN/PERMISSION_DENIED.",
+      "status": "unexpected",
+      "note": "Everything held except searchVector, which leaks the domain."
+    },
+    {
+      "goal": "GraphQL: writes",
+      "command": "mutation createCompany(data:{name:\"pn-should-not-exist-gql\"}); updateCompany(id:\"20202020-a018-...\", data:{tagline:...})",
+      "observed": "HTTP 200 with errors: \"Entity performing the request does not have permission\", subCode PERMISSION_DENIED, code FORBIDDEN. No row created.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "System-object probes over REST (OPEN, INHERITED, SYSTEM readability)",
+      "command": "GET /rest/{workspaceMembers,messageParticipants,calendarEventParticipants,messages,messageThreads,calendarEvents,attachments,timelineActivities,noteTargets,taskTargets,notes,shortLinks,recordShares,agentMessages,workflowRuns,workflowVersions}?limit=2",
+      "observed": "200 for OPEN objects: workspaceMembers (1005, names and userEmail), messageParticipants (1790, handle, displayName, personId), messages (600, subject and body text), calendarEvent(Participant)s, messageThreads. INHERITED: attachments 120, timelineActivities 4414, noteTargets 599 (company-parented rows only). SYSTEM: shortLink/recordShare/agentMessage 400 'records of \"x\" are not readable through the API'. notes/workflowRuns/workflowVersions 400.",
+      "status": "pass",
+      "note": "Matches the reviewer's readability correction. In the DB, INHERITED rows on people and opportunities exist (6214 timeline, 120 attachments, 1200 noteTargets) but none came back: a targetPersonId IS NOT NULL filter returned totalCount 0."
+    },
+    {
+      "goal": "Restricted field leaking through INHERITED system data",
+      "command": "GET /rest/timelineActivities?limit=1&filter=targetCompanyId[eq]:20202020-a8b0-422c-8fcf-5b7496f94975",
+      "observed": "HTTP 200: properties {\"after\":{\"id\":\"20202020-a8b0-...\",\"city\":\"Menlo Park\",\"name\":\"Meta\",\"domainName\":\"metacareers.com\"}}",
+      "status": "unexpected",
+      "note": "Second leak of the restricted field: timeline snapshots store field values without field-permission filtering. Attachment rows also carry signed file-download URLs with a token."
+    },
+    {
+      "goal": "Write and delete on OPEN-writable system objects (role has no create/update/delete)",
+      "command": "POST /rest/messageLists {\"name\":\"pn-limited-write-probe\"}; PATCH same; DELETE ?soft_delete=true; DELETE (destroy). Then DELETE /rest/{messages,messageParticipants,calendarEvents,timelineActivities,attachments,noteTargets}/00000000-0000-4000-8000-0000000000aa?soft_delete=true",
+      "observed": "messageList create HTTP 201, then update 200, soft delete 200 and destroy 200, all by pn-limited-key. Nonexistent-id deletes: 404 'Record not found' for all six objects (the permission check passed); companies and people give 400 PERMISSION_DENIED. workspaceMembers create/update give 400 PERMISSION_DENIED.",
+      "status": "unexpected",
+      "note": "A 'read Company only, no write' role can create, update, soft-delete and destroy system records, and is allowed to delete messages, participants, calendar events and timeline items. I used a nonexistent id so no seed data was touched. My messageList was destroyed by the test itself."
+    },
+    {
+      "goal": "Search query across objects (step 4)",
+      "command": "POST /graphql search(searchInput:$s, limit:5, includedObjectNameSingulars:$inc, excludedObjectNameSingulars:$exc) with s=Meta / metacareers / Griffin(inc person) / Jennifer(inc workspaceMember,messageParticipant,calendarEventParticipant)",
+      "observed": "With company included (default or explicit): FORBIDDEN 'no permission to read field \"domainName\" on \"company\"'. Excluding company or including person: FORBIDDEN PERMISSION_DENIED. Readable system objects only: HTTP 200 with workspaceMember hits (Jennifer Hernandez, ...).",
+      "status": "pass",
+      "note": "Search fails closed: any unreadable object or field in scope rejects the whole query, so no domain oracle. Side effect: default search is unusable for this role. search is on /graphql, not /metadata."
+    },
+    {
+      "goal": "Aggregate and groupBy (step 4)",
+      "command": "companies{totalCount countNotEmptyName}; companies{countNotEmptyDomainName countUniqueValuesDomainName}; companiesGroupBy(groupBy:[{name:true}]); companiesGroupBy(groupBy:[{domainName:{primaryLinkUrl:true}}]); peopleGroupBy; opportunities/people totalCount; GET /rest/companies/groupBy",
+      "observed": "Name aggregates and groupBy: 200 (totalCount 601). Any domainName aggregate or groupBy: FORBIDDEN field denied. peopleGroupBy and people/opportunities totalCount: FORBIDDEN PERMISSION_DENIED. REST groupBy by name: 200.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Relation traversal (step 4)",
+      "command": "companies{people{...}}, companies{opportunities{...}}, companies{accountOwner{name userEmail}}, messageParticipants{person{name}}, messageParticipants{personId}, noteTargets{note{title}}, attachments{targetCompany{name}}; REST /rest/companies/<id>?depth=1",
+      "observed": "people/opportunities/person/note nesting: whole query FORBIDDEN. accountOwner: 200, 'Phil Schiler' with phil.schiler@apple.dev. personId: 200. REST depth=1: 200, people and opportunities silently omitted, accountOwner, attachments and timelineActivities included.",
+      "status": "pass",
+      "note": "The relation restriction held. Workspace-member identities and person ids remain reachable."
+    },
+    {
+      "goal": "Filter or order companies by the restricted field (step 4)",
+      "command": "GraphQL filter domainName.primaryLinkUrl like %metacareers%; orderBy domainName AscNullsLast; or:[name eq zzz, domainName like]; companyDuplicates(data:[{domainName:{primaryLinkUrl:\"metacareers.com\"}}]); REST filter=domainName.primaryLinkUrl[like]..., order_by=domainName..., POST /rest/companies/duplicates; MCP find_many_companies domainName filter",
+      "observed": "All denied: GraphQL FORBIDDEN PERMISSION_DENIED; REST 400 PERMISSION_DENIED; MCP 'Entity performing the request does not have permission'. searchVector filter: GraphQL rejects the search operator (only eq, neq, is); REST searchVector[eq]:metacareers gives 200 with 0 rows.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "/metadata API with the limited key (step 4)",
+      "command": "objects; fields; getViews; currentWorkspace; getRoles; apiKeys; findManyAgents; objectRecordCounts; webhooks; findManyApplications; getPermissionFlags; getToolIndex; createOneObject; updateOneField; upsertObjectPermissions(own role, update true); createApiKey(Admin); createView; REST /rest/metadata/objects GET+POST, /rest/metadata/apiKeys",
+      "observed": "Allowed (200): objects, fields, getViews (61 views incl. 'All People', 'All Opportunities'), currentWorkspace. Denied FORBIDDEN PERMISSION_DENIED: roles, apiKeys, agents, record counts, webhooks, applications, flags, createOneObject, updateOneField, self-escalation, createApiKey. createView: 'You do not have permission to create workspace-level views'. getToolIndex: 'requires a token bound to a user workspace'. REST metadata objects: 403.",
+      "status": "pass",
+      "note": "Inconsistency: GraphQL /metadata objects is listable but REST /rest/metadata/objects is 403 for the same key. Self-escalation was blocked."
+    },
+    {
+      "goal": "REST batch (step 4)",
+      "command": "POST /rest/batch/companies [{\"name\":\"pn-batch-should-not-exist\"}]; POST /rest/batch/people [...]",
+      "observed": "Both HTTP 400 PERMISSION_DENIED.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "MCP catalog with the limited key (rough CRUD proxy for runAgent, per T5 fix)",
+      "command": "POST /mcp initialize; tools/list; tools/call get_tool_catalog {}",
+      "observed": "tools/list: 7 meta tools. Catalog: DATABASE_CRUD 171 tools, including find/group_by companies, find workspace_members, find/delete messages, message_participants and calendar_events, full CRUD on attachments, timeline_activities, note/task targets, message lists and campaigns. ACTION: navigate_app, save_campaign. VIEW 5, NAVIGATION_MENU_ITEM 4 (create/update/delete). No people or opportunity tools.",
+      "status": "unexpected",
+      "note": "Only the CRUD part is a proxy for runAgent. MCP also offers navigate_app, which runAgent excludes, and view/navigation tools outside runAgent's categories."
+    },
+    {
+      "goal": "MCP CRUD and navigate_app bypass (MCP/chat only)",
+      "command": "execute_tool find_many_people; find_many_companies select [id,name,domainName,searchVector]; find_many_message_participants; navigate_app navigateToRecord person 'Jeffery Griffin' / 'Jeffery'; opportunity 'a'; note 'a'",
+      "observed": "find_many_people: 'Tool \"find_many_people\" not found'. companies: Meta returned without domainName/searchVector, warnings 'Field ... not found on company'. participants: 1790, handles visible. navigate person: not found. opportunity: success, recordId 50505050-000e-..., 'Apple CarPlay Integration'. note: success, 'Partnership Opportunity'.",
+      "status": "unexpected",
+      "note": "Bypass confirmed: navigate_app returns the id and name of opportunity and note records that the role cannot read. It failed for person, probably a FULL_NAME label-matching quirk rather than a protection (not traced). MCP strips searchVector, unlike REST and GraphQL."
+    },
+    {
+      "goal": "Create pn-limited-agent and bind PN Limited (step 5)",
+      "command": "POST /metadata createOneAgent(input:{name:\"pn-limited-agent\", label:\"PN Limited Agent\", prompt:..., modelId:\"workspace-default-model\"}) with admin key; assignRoleToAgent(agentId:\"a8fb5c92-...\", roleId:Admin); assignRoleToAgent(..., roleId:\"f557b6ec-...\"); findOneAgent",
+      "observed": "Agent a8fb5c92-716e-41ce-a722-13aaaccc97d3 created, roleId null. Assigning Admin: 'Role \"Admin\" cannot be assigned to agents' (code INTERNAL_SERVER_ERROR). Assigning PN Limited: true. findOneAgent: roleId f557b6ec-...",
+      "status": "pass",
+      "note": "The Admin rejection comes back as INTERNAL_SERVER_ERROR rather than a 4xx-style code."
+    },
+    {
+      "goal": "Confirm role target rows in the DB",
+      "command": "SELECT rt.id, rt.\"roleId\", r.label, rt.\"agentId\", rt.\"apiKeyId\" FROM core.\"roleTarget\" rt JOIN core.role r ... WHERE r.label='PN Limited' OR apiKeyId=pn-admin-key",
+      "observed": "0c7f417c-843f-4a17-b34c-f3a75e89c84b PN Limited -> agent a8fb5c92...; 359bf730-46cc-49cb-8aeb-19f33df243cf PN Limited -> apiKey 3c06c28f...; 9d10e101-8bed-4775-8688-7a32fc4cd4ce Admin -> apiKey f2ae6798... Agent universalIdentifier e7b6d8bd-0818-452f-b600-02e0bc997401.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "AI check: ask the limited agent for a person's details",
+      "command": "not run: runAgent / sendChatMessage",
+      "observed": "Not executed: no LLM provider key is configured.",
+      "status": "not-run",
+      "note": "How to run later: (1) a human sets a catalog provider key (e.g. OPENAI_API_KEY or ANTHROPIC_API_KEY) and restarts the server; (2) with a session that has the AI flag (tim, or pn-admin-key), call POST /metadata mutation { runAgent(input:{agentUniversalIdentifier:\"e7b6d8bd-0818-452f-b600-02e0bc997401\", prompt:\"Find the person Jeffery Griffin and give email and job title, then list every tool you have by name.\"}) { success result error } }; (3) expect no person tools and companies without domainName; record any message_participants or timeline data as exposure. AI chat cannot select this agent (see conclusions)."
+    },
+    {
+      "goal": "Paid gating (step 6b): row-level predicate",
+      "command": "POST /metadata upsertRowLevelPermissionPredicates(input:{roleId:\"f557b6ec-...\", objectMetadataId:\"fc225736-...\", predicates:[{fieldMetadataId:\"67d5c4be-...\"(name), operand:CONTAINS, value:\"Meta\"}], predicateGroups:[]}), with the admin key, with empty lists, and with tim's session",
+      "observed": "All three: 'Row level permission predicate feature is disabled', subCode ROW_LEVEL_PERMISSION_FEATURE_DISABLED, code FORBIDDEN. core.rowLevelPermissionPredicate count stays 0.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Paid gating (step 6c): SSO and audit logs",
+      "command": "createOIDCIdentityProvider(input:{name:\"PN SSO probe\", issuer:\"https://pn-sso-probe.invalid\", clientID:\"pn-client\", clientSecret:<dummy>}) and getSSOIdentityProviders (admin key and tim session); eventLogs(input:{table:WORKSPACE_EVENT, first:1})",
+      "observed": "SSO, both callers: INTERNAL_SERVER_ERROR \"Cannot read properties of undefined (reading 'headers')\"; no PN SSO row created. eventLogs: FORBIDDEN CLICKHOUSE_NOT_CONFIGURED 'Audit logs require ClickHouse to be configured...'",
+      "status": "unexpected",
+      "note": "SSO is rejected, but the error is misleading. EnterpriseFeaturesEnabledGuard throws 'Enterprise features are not enabled', and then GuardRedirectService.dispatchErrorFromGuard crashes in a GraphQL context, returning a generic 500-style error. Audit logs are blocked by missing ClickHouse before any licence check is visible."
+    },
+    {
+      "goal": "Save env for the next test (step 7)",
+      "command": "write /Users/bussss/projects/twenty-playground/.pn-env; chmod 600",
+      "observed": "-rw------- .pn-env with PN_ADMIN_KEY, PN_LIMITED_KEY, PN_LIMITED_ROLE_ID, PN_RESTRICTED_FIELD=domainName, plus non-secret ids: key ids, field id, company object id, agent id and uid.",
+      "status": "pass",
+      "note": ""
+    }
+  ],
+  "conclusions": [
+    {
+      "question": "Can a role be limited to reading Company only and bound to an API key?",
+      "claim": "Yes. createOneRole, upsertObjectPermissions, upsertFieldPermissions and createApiKey(roleId) all worked over /metadata. Over REST, GraphQL and MCP, People and Opportunities reads, and every company create/update/delete, are denied with PERMISSION_DENIED.",
+      "status": "verified",
+      "evidence": "Steps: create PN Limited, REST reads, REST writes, GraphQL reads, GraphQL writes, REST batch"
+    },
+    {
+      "question": "Is the restricted field (Company.domainName) hidden?",
+      "claim": "Partly. Selecting, filtering, ordering, aggregating, grouping and duplicate-matching on domainName are all denied. But REST and GraphQL return company.searchVector containing the domain tokens, and timelineActivity.properties stores domainName snapshots readable by this role. MCP strips searchVector.",
+      "status": "partly",
+      "evidence": "Steps: REST read companies, GraphQL reads, timelineActivities leak, filter/order, aggregate/groupBy, MCP CRUD"
+    },
+    {
+      "question": "Do system objects leak to a Company-only role?",
+      "claim": "Yes. OPEN-readability system objects are readable: workspace members with emails, 1790 message participants, 600 email bodies, calendar participants. INHERITED objects show only company-parented rows. SYSTEM-readability objects are denied. This matches the reviewer's readability correction.",
+      "status": "verified",
+      "evidence": "Steps: system-object probes, relation traversal"
+    },
+    {
+      "question": "Does 'no create/update/delete' also apply to system objects?",
+      "claim": "No. The limited key created, updated, soft-deleted and destroyed its own messageList. Its permission checks also pass for deleting messages, messageParticipants, calendarEvents, timelineActivities, attachments and noteTargets (404 on a nonexistent id, while companies give PERMISSION_DENIED).",
+      "status": "verified",
+      "evidence": "Step: write/delete on OPEN-writable system objects; MCP catalog shows the matching tools"
+    },
+    {
+      "question": "Do search, groupBy, relation traversal or REST batch bypass the role?",
+      "claim": "No bypass found. Search fails closed whenever an unreadable object or field is in scope. groupBy and aggregates respect object and field rules. Nested people/opportunities are denied (GraphQL) or omitted (REST depth=1). Batch writes are denied.",
+      "status": "verified",
+      "evidence": "Steps: search, aggregate/groupBy, relation traversal, REST batch"
+    },
+    {
+      "question": "What can the limited key do on /metadata?",
+      "claim": "It can read the object/field schema, views (including People/Opportunity views) and currentWorkspace. It cannot read roles, keys, agents, webhooks, apps or record counts, and cannot create objects, edit fields, create views or keys, or raise its own role. REST /rest/metadata/objects returns 403 for the same key.",
+      "status": "verified",
+      "evidence": "Step: /metadata probes"
+    },
+    {
+      "question": "Does navigate_app bypass object permissions (MCP)?",
+      "claim": "Yes. Through MCP the limited key got the id and name of an opportunity ('Apple CarPlay Integration') and a note, neither of which its role can read. The person lookup returned 'not found' (cause not traced).",
+      "status": "verified",
+      "evidence": "Step: MCP navigate_app bypass"
+    },
+    {
+      "question": "Can the role be assigned to a custom agent, and is Admin refused?",
+      "claim": "Yes. assignRoleToAgent(PN Limited) returned true and roleTarget row 0c7f417c-843f-4a17-b34c-f3a75e89c84b links the agent to the role. Assigning Admin fails with 'Role \"Admin\" cannot be assigned to agents'.",
+      "status": "verified",
+      "evidence": "Steps: create agent and assign, roleTarget SELECT"
+    },
+    {
+      "question": "What would an AI chat started by an admin user with this agent enforce?",
+      "claim": "From source: the admin's role, not PN Limited. sendChatMessage has no agent argument (agent-chat.resolver.ts:159-170). Chat builds tools from the user's role (agent-chat-actor.service.ts:145-157; chat-execution.service.ts:203-233), so the admin would see person details.",
+      "status": "not-tested",
+      "evidence": "Source only; the AI check step is not-run (no LLM key). Agent roles apply in runAgent (lazy, agent role: agent-run.service.ts:135, agent-async-executor.service.ts:208-240 and 361) and in workflow steps (explicit grants only, :172)."
+    },
+    {
+      "question": "Which permission features are paywalled in this build (no enterprise key)?",
+      "claim": "Field-level permissions, object permissions, custom roles and agent/API-key assignment are accepted. Row-level predicates are rejected with ROW_LEVEL_PERMISSION_FEATURE_DISABLED and nothing is written. SSO is rejected, but as a 500-style 'reading headers' crash. Audit logs are blocked by missing ClickHouse.",
+      "status": "verified",
+      "evidence": "Steps: field restriction, RLS, SSO/audit logs"
+    },
+    {
+      "question": "Is API-key creation protected against privilege escalation?",
+      "claim": "Not by role strength. tim (Object-restricted, non-Admin, but with canUpdateAllSettings) created an API key bound to the Admin role. The ROLES flag is the only check.",
+      "status": "verified",
+      "evidence": "Step: create pn-admin-key"
+    }
+  ],
+  "artefacts": [
+    "API key pn-admin-key (id f2ae6798-e5c6-493d-8e29-39f7fa7a3a7d, role Admin, expires 2027-12-31): remove with POST /metadata mutation { revokeApiKey(input:{id:\"f2ae6798-e5c6-493d-8e29-39f7fa7a3a7d\"}) { id revokedAt } } using a user session (keys cannot be hard-deleted)",
+    "API key pn-limited-key (id 3c06c28f-7d26-4254-877b-4722db0883d8, role PN Limited, expires 2027-12-31): revokeApiKey(input:{id:\"3c06c28f-7d26-4254-877b-4722db0883d8\"})",
+    "Agent pn-limited-agent (id a8fb5c92-716e-41ce-a722-13aaaccc97d3, universalIdentifier e7b6d8bd-0818-452f-b600-02e0bc997401, roleTarget 0c7f417c-843f-4a17-b34c-f3a75e89c84b): deleteOneAgent(input:{id:\"a8fb5c92-716e-41ce-a722-13aaaccc97d3\"}) { id }",
+    "Role PN Limited (id f557b6ec-72c9-4006-81b4-f7f1c52a3076) with objectPermission on company and fieldPermission d5d9fe38-eaa0-485c-807f-34812df9219e (domainName): delete after revoking pn-limited-key and deleting the agent, with deleteOneRole(roleId:\"f557b6ec-72c9-4006-81b4-f7f1c52a3076\"). It may fail while the key's roleTarget exists, because the default role Member cannot be assigned to API keys.",
+    "Role target rows 359bf730-46cc-49cb-8aeb-19f33df243cf (PN Limited -> pn-limited-key) and 9d10e101-8bed-4775-8688-7a32fc4cd4ce (Admin -> pn-admin-key): handled by revoke/role deletion",
+    "One session/refresh token for tim@apple.dev from the GraphQL login (core.appToken REFRESH_TOKEN): expires on its own, or revoke it through the user's sessions",
+    "/Users/bussss/projects/twenty-playground/.pn-env (chmod 600; PN_ADMIN_KEY, PN_LIMITED_KEY, PN_LIMITED_ROLE_ID, PN_RESTRICTED_FIELD=domainName, plus non-secret ids): rm after revoking the keys",
+    "/Users/bussss/projects/twenty-playground/permissions/ (chmod 700): .admin_key and .limited_key (chmod 600 token copies), .meta_schema.json (introspection output, no secrets), pn_gql.py, rest.sh, mcp.sh, mcpcall.py: rm -rf the directory after revoking the keys"
+  ],
+  "cleanup": "The messageList 'pn-limited-write-probe' (bbc21a10-1c51-4154-9b7e-a7cdb862cd24), created during the write probe, was destroyed by the same key (SELECT shows 0 rows). No pn-should-* companies were created (SELECT count 0). No SSO provider, RLS predicate or view was created. The temporary files holding tim's login/access token (.login.out, .auth.out, .tim_token) were deleted.",
+  "problems": [
+    "Restricted-field leak 1: company.searchVector (a system TS_VECTOR field) is returned by REST GET /rest/companies and is selectable in GraphQL, and it contains the tokens of the restricted domainName (e.g. 'housecallpro.com'). Field permissions do not cover it. MCP strips it.",
+    "Restricted-field leak 2: timelineActivity.properties snapshots (e.g. {name:'Meta', domainName:'metacareers.com'}) are readable by a role that cannot read domainName.",
+    "A role with no create/update/delete still creates, updates, soft-deletes and destroys system records (verified on its own messageList) and passes permission checks for deleting messages, messageParticipants, calendarEvents, timelineActivities, attachments and noteTargets. I did not delete any seed data: I used a nonexistent id, which returned 404 instead of PERMISSION_DENIED.",
+    "navigate_app over MCP returns the id and name of opportunity and note records the role cannot read. Person lookups returned 'not found' (Jeffery Griffin exists); the cause was not traced.",
+    "OPEN system objects expose people-related data to a Company-only role: workspace member names and emails (also through company.accountOwner), message participant handles and personIds, full email subject and body text, calendar participants.",
+    "A non-Admin user (tim, Object-restricted, but with canUpdateAllSettings) could create an API key bound to the Admin role.",
+    "Status codes differ from the research: REST permission denials are HTTP 400 (not 403), except /rest/metadata/* which returns 403. Assigning Admin to an agent returns code INTERNAL_SERVER_ERROR.",
+    "The SSO gate is enforced but reports a misleading generic error, \"Cannot read properties of undefined (reading 'headers')\" (GuardRedirectService in a GraphQL context), for both the API key and the user session.",
+    "GraphQL search fails closed: a role that cannot read one field used in company search (domainName, the image identifier) or any object in scope gets the whole search query rejected, so default search is unusable for this role.",
+    "tim's user access token lasts about 30 minutes; later tests should use PN_ADMIN_KEY from .pn-env. Note that API keys cannot call createApiKey, generateApiKeyToken or getToolIndex (user session required).",
+    "Not run: the runAgent / AI-chat check (no LLM key). The MCP catalog is only a rough CRUD proxy for runAgent: runAgent excludes navigate_app, view and navigation-menu tools and adds DASHBOARD/WORKFLOW tools when the role's flags allow them (PN Limited has no flags).",
+    "Other agents' artefacts exist in the same workspace (role 'PN Hello World default function role', key 'pn-apps-key'); I left them untouched. The company count was 601 vs 600 at research time, probably another agent's record."
+  ]
+}

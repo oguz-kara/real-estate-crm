@@ -1,0 +1,264 @@
+{
+  "area": "AI tools: default agent tools and custom tools from apps (Question 2, second half)",
+  "verdicts": [
+    {
+      "id": "F01",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Opened all four refs. ToolCategory has exactly these 10 values; the TOOL_PROVIDERS factory (tool-provider.module.ts:101-125) returns 10 providers; database-tool.provider.ts:193-467 emits exactly the listed operations (delete dispatches with soft: true, tool-executor.service.ts:245-252). Only active, non-system, non-workflow objects get tools."
+    },
+    {
+      "id": "F02",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "toolMap (action-tool.provider.ts:65-79) holds exactly these 13 tools; ACTION_TOOL_IDS labels cover 11 of them. code-interpreter-tool.ts:49 says Python. Native map matches (web_search for Anthropic/OpenAI/xAI, x_search for xAI). Caveat: navigate_app is a read that bypasses record permissions, and save_campaign needs a userWorkspaceId and writes with that user's role (see missed)."
+    },
+    {
+      "id": "F03",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Recounted from the factories and services: metadata 6 object + 7 field tools; view 6+6+5+5 = 22 with 5 get_* reads; 22 workflow tool names, none of which runs or triggers a workflow; dashboard 7; webhook 4; navigation 4; role 7. All cited lines are correct."
+    },
+    {
+      "id": "F04",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "chat-execution.service.ts:243-387 builds exactly this ToolSet: propose_email only if send_email is in the catalog, attach_conversation_to_record behind IS_CONVERSATIONS_TAB_ENABLED (false in the local DB), complete_workspace_setup only in the setup thread. Unauthenticated introspection of /metadata shows sendChatMessage(threadId, text, messageId, browsingContext, modelId, fileAttachments): no agent argument. The CRUD part of the catalog is rendered as operations plus object names."
+    },
+    {
+      "id": "F05",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "agent-async-executor.service.ts:150-187 and both constants match; ai-agent.workflow-action.ts:154-162 adds the three pausing tools only when canAskQuestions === true. Native web/X search is merged in when enabled on the agent; a step without an agent, or an agent without a role, gets no registry tools."
+    },
+    {
+      "id": "F06",
+      "verdict": "imprecise",
+      "correctedClaim": "runAgent uses the lazy strategy: an agent with a role gets learn_tools and execute_tool (plus native web_search/x_search if enabled on the agent) over a name catalog of DATABASE_CRUD, ACTION, DASHBOARD and WORKFLOW minus search_help_center, navigate_app, file-upload and output-navigation tools; no load_skills, no pausing tools.",
+      "correctedRefs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:231",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:361",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:384",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-excluded-tool-names.const.ts:3"
+      ],
+      "reason": "Lazy strategy, the four categories and the absence of load_skills and pausing tools are right. 'Only learn_tools and execute_tool' is overstated: native tools are merged at :384-392, nothing is offered when the agent has no role (:361), and the catalog also drops WORKFLOW_AGENT_EXCLUDED_TOOL_NAMES and the output-navigation tools (:231-240)."
+    },
+    {
+      "id": "F07",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "mcp-protocol.service.ts:261-321 builds exactly these 7 tools; :449-475 is direct mode (all registry tools minus the excluded set, plus search_help_center, load_skills, list_object_metadata_names, list_skills). The excluded set is applied to get_tool_catalog, learn_tools, execute_tool and the direct listing. Local probe: POST /mcp without credentials returns 401 with a WWW-Authenticate header, GET returns 405."
+    },
+    {
+      "id": "F08",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "getCatalog (tool-registry.service.ts:37-66) filters in the stated order. resolveAndExecute re-reads the full catalog with no category or exclude filter, so surface restrictions rest on isToolAllowed alone. Arguments are not validated for any execution kind, not only for logic functions (see missed)."
+    },
+    {
+      "id": "F09",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Matches database-tool.provider.ts:161-169, 193, 280, 416 and both zod-schema refs. The local seed agrees (role Object-restricted: pet read-only row, rocket all-false row, field rows for company.linkedinLink and person.jobTitle). Record services also pass rolePermissionConfig to the common query runners. Delete tools are generated even for automation-blocked objects and are only refused at execution."
+    },
+    {
+      "id": "F10",
+      "verdict": "imprecise",
+      "correctedClaim": "Flags gate http_request, email, calendar, file-upload and code_interpreter tools, view writes (VIEWS), METADATA (DATA_MODEL), WORKFLOW (WORKFLOWS), DASHBOARD (LAYOUTS), WEBHOOK (API_KEYS_AND_WEBHOOKS) and ROLE (ROLES); search_help_center, navigate_app, save_campaign, output-navigation, view get_*, navigation-menu-item and app_* tools are generated without any flag check.",
+      "correctedRefs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool-provider/providers/action-tool.provider.ts:187",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool-provider/providers/view-tool.provider.ts:63",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool-provider/providers/navigation-menu-item-tool.provider.ts:24",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:29",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/navigation-menu-item/services/navigation-menu-item-access.service.ts:40"
+      ],
+      "reason": "The flag-to-tool mapping and the canAccessAllTools / canUpdateAllSettings rule are right, but 'flags gate the rest' is overstated. action-tool.provider.ts:187-228 pushes five ACTION tools unconditionally, view read tools are always built, NavigationMenuItemToolProvider.isAvailable returns true (only workspace-scope writes check LAYOUTS inside the access service), and LOGIC_FUNCTION has no check."
+    },
+    {
+      "id": "F11",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "All refs match. buildAgentRolePermissionConfig returns only the run-as role when set, otherwise only the agent role; the workflow action passes no runAsRoleId. MCP detail not in the claim: any user-bearing token (session, OAuth, app-with-user) uses the user's role intersected with the calling application's default role when it has one; a token with neither user nor API key gets 403."
+    },
+    {
+      "id": "F12",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "AgentEntity has no tool or skill column; ModelConfiguration only has webSearch and twitterSearch; the agent settings tabs are Settings, Role, Evals, Logs. requireExplicitObjectGrants is set only on the preload path and the spec at :332 covers it. Local DB: the seeded standard agent 'helper' has no role target in either workspace."
+    },
+    {
+      "id": "F13",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "All refs match: the type, the rich-app fixture, the document-generator example, schema inference at manifest-build.ts:291-306, the 2.3.0 command that drops isTool and toolInputSchema, and the docs note on AST detection. At runtime a missing schema falls back to DEFAULT_TOOL_INPUT_SCHEMA. Settings > AI > Tools > New Tool exists in the front end (useCreateTool.ts)."
+    },
+    {
+      "id": "F14",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "buildLogicFunctionToolName and the descriptor code match the claim. The spec shows app_own_tool and app_other_tool for functions of two different applications, so names carry no application prefix."
+    },
+    {
+      "id": "F15",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "isAvailable returns true; generateDescriptors filters only on toolTriggerSettings, deletedAt and canCallerReachApplication (OAuth-only client apps are unscoped). Executor env: TWENTY_APP_ACCESS_TOKEN is the user-delegated token or the app token, and the app's own token is always also present (TWENTY_APP_APPLICATION_ACCESS_TOKEN, TWENTY_API_KEY). Direct executeOneLogicFunction needs WORKFLOWS; the tool route does not."
+    },
+    {
+      "id": "F16",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Both category constants and the isToolAllowed closure match, and no other ToolRegistryService caller adds LOGIC_FUNCTION for agents. Caveat from source only, not tested: an agent whose role has CODE_INTERPRETER_TOOL can run Python that calls /mcp with the acting user's token, which reaches app_* tools (see missed)."
+    },
+    {
+      "id": "F17",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Matches load-skill.tool.ts, both chat section builders, the MCP instruction text, SkillEntity and the manifest type. Chat lists each skill's name with its description or label; only active skills are listed; no agent or role relation exists anywhere in the entity, manifest or agent execution code."
+    },
+    {
+      "id": "F18",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran the cited SELECT: 6 rows, 3 per workspace, all in application Custom, with is_tool = f, is_wf_action = f, deleted = f."
+    },
+    {
+      "id": "F19",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "http-tool.ts:49 uses SecureHttpClientService.getHttpClient; MAX_REDIRECTS = 5, http/https only, private and link-local ranges blocked (is-private-ip.util.ts); config defaults are [] and true; '*' allows all. The local .env sets neither variable and the DB holds no override."
+    },
+    {
+      "id": "F20",
+      "verdict": "imprecise",
+      "correctedClaim": "300 steps per run (chat and agents); outputs over 16,000 bytes spill to a file in chat and runAgent, raw in MCP and workflow steps. Find limit 10/100 and create_many 20 are unenforced schema hints: the server allows 200 (QUERY_MAX_RECORDS), also when limit is omitted.",
+      "correctedRefs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/record-crud/services/find-records.service.ts:100",
+        "/Users/bussss/projects/twenty/packages/twenty-shared/src/constants/QueryMaxRecords.ts:1",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/api/common/common-query-runners/common-create-many-query-runner/common-create-many-query-runner.service.ts:115",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:167",
+        "/Users/bussss/projects/twenty/node_modules/@ai-sdk/provider-utils/dist/index.js:3232"
+      ],
+      "reason": "The 300 steps and the 16,000-byte spill are right. The find default 10 / max 100 and create_many max 20 exist only in the schema shown to the model: tools are hydrated with jsonSchema() without a validator and execute_tool and MCP forward raw arguments. FindRecordsService uses Math.min(limit, 200), or 200 when limit is missing; create-many rejects only above 200. Not mentioned: compactOutput in chat and runAgent, a per-workspace logic-function throttle (1000 per 60 s) and the credit check that also ends a loop."
+    },
+    {
+      "id": "F21",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "PAUSING_TOOLS has exactly three entries. answerToolCall is a CoreResolver mutation on /graphql (confirmed by introspection), open to user sessions and user-bearing OAuth/app tokens, not API keys. No needsApproval-style option exists; the 'awaiting-approval' state in the step-log schema and the SDK approval statuses are never produced by server code at this tag."
+    },
+    {
+      "id": "F22",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "All refs match: the exclusion set, both config defaults, the isEnabled check, the DisabledDriver message, timeout default 300 and CHECK 1..900. Locally both variables appear only commented out in .env and the DB holds no override, so the defaults follow NODE_ENV."
+    }
+  ],
+  "missed": [
+    {
+      "subQuestion": "Q2h",
+      "claim": "navigate_app (ACTION, no permission flag, offered in AI chat and over MCP, excluded only for workflow agents and runAgent) looks records up with a system auth context and shouldBypassPermissionChecks: navigateToRecord returns the id and display name of the best fuzzy match for any active object, whatever the caller's role. Tim's role has no rocket access and 3 rockets are seeded, so this is testable without an LLM.",
+      "sourceType": "source",
+      "refs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool/tools/navigate-tool/navigate-app-tool.ts:344",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool/tools/navigate-tool/navigate-app-tool.ts:350",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool-provider/providers/action-tool.provider.ts:196",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/api/mcp/constants/mcp-excluded-tool-names.const.ts:3",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-excluded-tool-names.const.ts:5"
+      ],
+      "evidenceQuote": "{ shouldBypassPermissionChecks: true },"
+    },
+    {
+      "subQuestion": "Q2j",
+      "claim": "Registry tool arguments are never validated against the advertised input schema on the server: tools are hydrated with jsonSchema(schema) and no validate function (the AI SDK then accepts any input), and execute_tool and MCP tools/call forward raw arguments to the executor. Only tools that parse their own input (for example navigate_app) reject bad arguments.",
+      "sourceType": "source",
+      "refs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:167",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:339",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/api/mcp/services/mcp-tool-executor.service.ts:94",
+        "/Users/bussss/projects/twenty/node_modules/@ai-sdk/provider-utils/dist/index.js:3232",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/record-crud/services/find-records.service.ts:100"
+      ],
+      "evidenceQuote": "inputSchema: jsonSchema(schema),"
+    },
+    {
+      "subQuestion": "Q2h",
+      "claim": "Agent-role scoping has two source-level exceptions in a manually launched workflow agent step: code_interpreter injects a 5-minute access token of the launching user plus an MCP helper into the sandbox (Python can call POST /mcp as that user, including app_* tools), and save_campaign writes with that user's role. Neither uses the agent's role. Not runtime-tested.",
+      "sourceType": "source",
+      "refs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool/tools/code-interpreter-tool/code-interpreter-tool.ts:125",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool/tools/code-interpreter-tool/code-interpreter-tool.ts:144",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool/tools/code-interpreter-tool/code-interpreter-tool.ts:341",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool/tools/code-interpreter-tool/twenty-mcp-helper.const.ts:188",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/modules/emailing/services/message-campaign-draft.service.ts:91",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/modules/workflow/workflow-executor/services/workflow-execution-context.service.ts:76"
+      ],
+      "evidenceQuote": "TWENTY_API_TOKEN: sessionToken,"
+    },
+    {
+      "subQuestion": "Q2i",
+      "claim": "An app-defined agent gets a role only if defineAgent sets roleUniversalIdentifier (the role may not exceed the application role). Without it no role target is synced and the agent gets no registry tools at all. The tutorial and example document-assistant agent set none, and the seeded 'helper' agents have no role in the local DB.",
+      "sourceType": "source",
+      "refs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/application/application-manifest/services/compute-application-manifest-all-universal-flat-entity-maps.service.ts:393",
+        "/Users/bussss/projects/twenty/packages/twenty-apps/examples/document-generator/src/agents/document-assistant.agent.ts:5",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:68",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/config/roles.mdx:217",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:361",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT a.name, (SELECT count(*) FROM core.\\\"roleTarget\\\" rt WHERE rt.\\\"agentId\\\"=a.id) FROM core.agent a WHERE a.\\\"deletedAt\\\" IS NULL;\""
+      ],
+      "evidenceQuote": "if (isDefined(agentManifest.roleUniversalIdentifier)) {"
+    },
+    {
+      "subQuestion": "Q2i",
+      "claim": "Live docs have drifted further than the research reported. The live skills-and-agents page (WebFetch, 2026-10-03) documents runAgent({ input }) taking a string or message list, sendInboxMessage(), and a propose_tool_call pausing call for send_email/draft_email. The v2.44.0 tag accepts only prompt or messages, has no sendInboxMessage and uses propose_email. The AI-flag requirement on the app default role is already in the tag's page (lines 141-144), not new.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:114",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:141",
+        "/Users/bussss/projects/twenty/packages/twenty-shared/src/application/runAgentType.ts:15"
+      ],
+      "evidenceQuote": "live: input: 'Enrich House Ad <recordId>: fill empty fields from its listing URL.', / tag: prompt: 'Enrich House Ad <recordId>: fill empty fields from its listing URL.',"
+    },
+    {
+      "subQuestion": "Q2j",
+      "claim": "propose_email is the only built-in 'agent proposes a write, a person approves, then it is applied' path at this tag. On answerToolCall with decision send or saveDraft the server runs send_email or draft_email through the registry as the person who answered (their role and connected accounts), not as the agent or the original chat sender's tool context.",
+      "sourceType": "source",
+      "refs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/pausing-tools/propose-email.pausing-tool.ts:47",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/pausing-tools/propose-email.pausing-tool.ts:81",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-tool-call-answer/services/tool-call-answer.service.ts:587",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/ai/ai-tool-call-answer/services/tool-call-answer.service.ts:619"
+      ],
+      "evidenceQuote": "send: { toolName: 'send_email', status: 'sent' },"
+    }
+  ],
+  "testPlanIssues": [
+    "Shell state does not persist between tool calls in this harness, so 'export PN_TOKEN' and the gql()/mcp() helpers defined in plan 1 are gone in the next call; the access token also expires after 30 minutes (ACCESS_TOKEN_EXPIRES_IN = '30m', config-variables.ts:348). Fix: put login, helper definitions and all steps of one test in a single script run (script kept in the playground dir, token only in a shell variable), and log in again per test.",
+    "Plans 2 and 6 expect no route to rocket data ('no tool at all for rocket', 'rockets are not'), but navigate_app reads any active object with shouldBypassPermissionChecks (navigate-app-tool.ts:344-351) and is available in chat and MCP. Add a no-LLM step: mcp '{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"navigate_app\",\"arguments\":{\"navigation\":{\"type\":\"navigateToRecord\",\"objectNameSingular\":\"rocket\",\"recordName\":\"Starship\"}}}}}' | jq -r '.result.content[0].text'. Per source this returns success with a recordId and the message Navigating to rocket record \"Starship\" (3 rockets are seeded in Apple); record it as a restriction that did not hold if reproduced.",
+    "Plan 5 cleanup assumes deleting the workflow removes its agent. Source only deletes the agent when the AI Agent step is deleted or its type changes (workflow-version-step-operations.workspace-service.ts:118-143), and that same path deletes an agent-only role left without assignments (ai-agent-role.service.ts:167-205). Fix: delete the Agent step first, then the workflow, then check with SELECT label, \"deletedAt\" FROM core.agent WHERE label LIKE 'Workflow Agent%' and SELECT label FROM core.role WHERE label LIKE 'PN %'; remove leftovers with deleteOneAgent / deleteOneRole and expect 'PN broad role' may already be gone.",
+    "Plan 5 says to read 'server stdout' for the 'Generated N tools ...' lines. Workflow steps (and chat turns in plan 6) run in the queue worker, so the lines are in the worker's output. Run A (agent without role) logs only 'Generated 0 tools for agent'; the 'for categories: [DATABASE_CRUD, ACTION]' line is not emitted because getToolsByCategories is never called. Only runAgent (plan 4) logs in the API server process.",
+    "Plan 6 is marked needsBrowser: false but its cleanup deletes the chat thread in the UI, and the /metadata chat resolver has no delete-thread mutation (only createChatThread, sendChatMessage, retryChatMessage, stopAgentChatStream, deleteQueuedChatMessage). Fix: mark the cleanup as needing the browser, or soft-delete the agentChatThread record through the workspace record API on /graphql after confirming the mutation name by authenticated introspection.",
+    "Playground path: the user's rule names ~/dev/twenty-playground, the plan uses /Users/bussss/projects/twenty-playground. ~/dev does not exist on this machine (the repo and LOCAL-SETUP.md are under /Users/bussss/projects/twenty). Either use the path the user named or state the deviation explicitly in the notes."
+  ]
+}

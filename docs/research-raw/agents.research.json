@@ -1,0 +1,694 @@
+{
+  "area": "AI agents: definition, configuration, model providers and API keys (Question 2, first half) - Twenty v2.44.0 (commit f7a4720e)",
+  "summary": "In v2.44 an agent is a workspace metadata row (core.agent: name, label, prompt, modelId, responseFormat, modelConfiguration for native web/X search, evaluationInputs, isCustom, optional role via roleTarget); the only standard one is `helper`, and agents are created with the `createOneAgent` mutation on /metadata, with `defineAgent()` in an app, or implicitly by adding a workflow \"AI Agent\" step (the /settings/ai/new-agent form exists but nothing links to it and Settings > AI lists no agents). Agent entities execute only through `AgentAsyncExecutorService.executeAgent` (workflow AI Agent step, `runAgent` from SDK/GraphQL, agent evals): the server prepends a fixed base prompt to agent.prompt, caps the loop at 300 steps and offers CRM tools only when the agent has a role; AI chat does NOT run an agent entity - it is one built-in assistant (fixed prompt + workspace instructions + tool/skill catalogs) running with the chatting user's role, with no router or handoff, and `POST /rest/ai/generate-text` gives raw generation with no agent or tools. Six providers ship in the bundled catalog (OpenAI, Anthropic, Google, Mistral, xAI, plus evaluation-only TypeSafe AI); models are addressed as provider/model[@effort] and five tiers (extraFast..extraSmart) resolve to the first model whose provider has a key (AI_MODELS_DEFAULT_<TIER> chains; chat and agents both default to the `fast` tier, i.e. anthropic/claude-sonnet-5@medium or openai/gpt-5.6-luna@medium per the shipped defaults - not verified against a real key). To enable AI locally set ANTHROPIC_API_KEY or OPENAI_API_KEY either in packages/twenty-server/.env (restart server and worker) or, without restart, in Settings > Admin Panel > Config (stored encrypted in core.\"keyValuePair\", overrides .env); verify with the unauthenticated GET /client-config (aiModels / aiModelTiers, both empty on this instance today). Without a key the chat stays visible but shows \"No AI provider is configured on this instance.\" and disables sending; with billing disabled nothing in AI is credit- or feature-flag-gated, but custom/OpenAI-compatible providers (AI_PROVIDERS) need an enterprise key above 25 seats and this seeded instance counts 1005 seats, so they would be refused here. Per-agent knobs are limited to model, response format (text or flat JSON schema) and native web/X search; there is no temperature or per-agent step limit, skills are workspace-level and only used by chat/MCP, and the code interpreter is an instance setting (CODE_INTERPRETER_TYPE) plus a role permission flag. Two source findings matter directly for a vertical app and should be confirmed by test: agent-entity runs cannot call app logic-function tools (their tool categories exclude LOGIC_FUNCTION), and a role assigned to an agent has no effect on AI chat. Docs for this area are thin and partly ahead of or behind the code (chat with a named agent, agent picker in the workflow step, \"skills\" on runAgent); the five live docs pages compared showed no drift from the tag.",
+  "findings": [
+    {
+      "id": "Q2a-1",
+      "subQuestion": "Q2a",
+      "claim": "An agent is a row in core.agent: name, label, icon, description, prompt, modelId (default 'workspace-default-model'), responseFormat (default {type:'text'}), isCustom, modelConfiguration, evaluationInputs, applicationId. Its role is a separate roleTarget row, surfaced as roleId in GraphQL.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/entities/agent.entity.ts:18",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/dtos/agent.dto.ts:50",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/agent.service.ts:47"
+      ],
+      "evidenceQuote": "@Column({ nullable: true, type: 'jsonb', default: { type: 'text' } })",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2a-2",
+      "subQuestion": "Q2a",
+      "claim": "Only one standard agent ships: `helper` (label Helper, modelId workspace-default-model, isCustom false). Locally each seeded workspace has exactly this one agent and it has no role assigned; standard agents cannot be updated or deleted through the API.",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c \"SELECT w.\\\"displayName\\\", a.name, a.label, a.\\\"modelId\\\", a.\\\"isCustom\\\", a.\\\"responseFormat\\\"::text, (SELECT count(*) FROM core.\\\"roleTarget\\\" rt WHERE rt.\\\"agentId\\\" = a.id) AS role_links FROM core.agent a JOIN core.workspace w ON w.id = a.\\\"workspaceId\\\" WHERE a.\\\"deletedAt\\\" IS NULL ORDER BY 1,2;\"",
+        "packages/twenty-server/src/engine/workspace-manager/twenty-standard-application/constants/standard-agent.constant.ts:1",
+        "packages/twenty-server/src/engine/workspace-manager/twenty-standard-application/utils/agent-metadata/create-standard-flat-agent-metadata.util.ts:10",
+        "packages/twenty-server/src/engine/workspace-manager/workspace-migration/workspace-migration-builder/validators/services/flat-agent-validator.service.ts:160"
+      ],
+      "evidenceQuote": "Apple | helper | Helper | workspace-default-model | f | {\"type\": \"text\"} | 0",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2a-3",
+      "subQuestion": "Q2a",
+      "claim": "GraphQL creation is `createOneAgent(input: CreateAgentInput!)` on /metadata (needs AI_SETTINGS permission): label!, prompt!, modelId! plus optional name, icon, description, roleId, responseFormat, modelConfiguration, evaluationInputs; server sets isCustom=true. Also updateOneAgent, deleteOneAgent, findManyAgents, findOneAgent.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/agent.resolver.ts:93",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/dtos/create-agent.input.ts:22",
+        "curl -s -X POST http://localhost:3000/metadata -H 'Content-Type: application/json' -d '{\"query\":\"{ __type(name:\\\"CreateAgentInput\\\"){ inputFields{ name } } }\"}'  (introspection on the running instance returned the same 10 fields)"
+      ],
+      "evidenceQuote": "{ ...input, isCustom: true },",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2a-4",
+      "subQuestion": "Q2a",
+      "claim": "App-side `defineAgent()` (twenty-sdk/define) takes universalIdentifier, name, label, prompt, optional icon, description, modelId, responseFormat, roleUniversalIdentifier. The synced agent is isCustom=false with modelConfiguration null and no evaluationInputs; a role above the application role fails the build (docs).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/application/agentManifestType.ts:4",
+        "packages/twenty-sdk/src/sdk/define/agents/define-agent.ts:8",
+        "packages/twenty-server/src/engine/core-modules/application/utils/from-agent-manifest-to-universal-flat-agent.util.ts:28",
+        "packages/twenty-apps/examples/hello-world/src/agents/example-agent.ts:6",
+        "https://docs.twenty.com/developers/extend/apps/config/roles",
+        "packages/twenty-docs/developers/extend/apps/config/roles.mdx"
+      ],
+      "evidenceQuote": "modelConfiguration: null, evaluationInputs: [], isCustom: false,",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2a-5",
+      "subQuestion": "Q2a",
+      "claim": "Settings → AI has tabs Overview, Models, Skills, Tools, Usage and no agent list. The create form route /settings/ai/new-agent exists but no component links to it; in practice the UI creates agents when an 'AI Agent' workflow step is added.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-front/src/pages/settings/ai/SettingsAI.tsx:40",
+        "packages/twenty-front/src/modules/app/components/SettingsRoutes.tsx:878",
+        "packages/twenty-shared/src/types/SettingsPath.ts:49",
+        "packages/twenty-server/src/modules/workflow/workflow-builder/workflow-version-step/workflow-version-step-operations.workspace-service.ts:547",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/components/WorkflowStepFooter.tsx:71"
+      ],
+      "evidenceQuote": "label: 'Workflow Agent ' + baseStep.id.substring(0, 4),",
+      "confidence": "medium"
+    },
+    {
+      "id": "Q2b-1",
+      "subQuestion": "Q2b",
+      "claim": "AI chat does not run an Agent entity: createChatThread/sendChatMessage take no agent id. Each turn uses a built-in system prompt (CHAT_SYSTEM_PROMPTS + workspace instructions + user context + tool and skill catalogs) and the chatting user's role. No router or handoff exists.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/resolvers/agent-chat.resolver.ts:160",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:203",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:454",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/utils/build-full-system-prompt.util.ts:44",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/constants/chat-system-prompts.const.ts:1"
+      ],
+      "evidenceQuote": "workspaceInstructions: workspace.aiAdditionalInstructions ?? undefined,",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2b-2",
+      "subQuestion": "Q2b",
+      "claim": "The workflow 'AI Agent' step, runAgent and agent evals (runEvaluationInput) all call AgentAsyncExecutorService.executeAgent. System prompt = caller base prompt (WORKFLOW_BASE_SYSTEM_PROMPT or AGENT_RUN_BASE_SYSTEM_PROMPT) + agent.prompt + tool catalog (lazy mode); the step's own prompt field becomes the user message.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:411",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts:139",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:124",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/jobs/run-evaluation-input.job.ts:57",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/constants/workflow-base-system-prompt.const.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/constants/agent-run-base-system-prompt.const.ts:6"
+      ],
+      "evidenceQuote": "instructions: `${baseSystemPrompt}\\n\\n${agent ? tipTapDocumentToMarkdown(agent.prompt) : ''}${toolCatalogSection}`,",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2b-3",
+      "subQuestion": "Q2b",
+      "claim": "Apps call agents through the `runAgent(input: RunAgentInput!)` mutation on /metadata (SDK: runAgent() from twenty-sdk/logic-function): agentUniversalIdentifier plus prompt or messages, optional runAsWorkspaceMemberId. It needs the AI permission flag, runs synchronously, and an application caller may only run its own agents.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/resolvers/agent-run.resolver.ts:50",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:86",
+        "packages/twenty-sdk/src/sdk/logic-function/agents/run-agent.ts:8",
+        "packages/twenty-sdk/src/sdk/logic-function/utils/post-graphql-request.util.ts:27",
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx"
+      ],
+      "evidenceQuote": "`Agent ${input.agentUniversalIdentifier} belongs to another application`,",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2b-4",
+      "subQuestion": "Q2b",
+      "claim": "Agent-entity runs get registry tools only when the agent has a role, limited to categories DATABASE_CRUD+ACTION (workflow step) or DATABASE_CRUD, ACTION, DASHBOARD, WORKFLOW (runAgent). App logic-function tools are category LOGIC_FUNCTION, so these runs cannot call them; AI chat's catalog is unfiltered.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:359",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/open-ended-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:23",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/tools/execute-tool.tool.ts:60",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:223"
+      ],
+      "evidenceQuote": "// Registry tools are scoped exclusively by the agent permission-tab // role. No role means no registry tools.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2c-1",
+      "subQuestion": "Q2c",
+      "claim": "The bundled catalog (ai-providers.json) defines six providers keyed by env template: openai (44 models), anthropic (16), google (20), mistral (30), xai (7) and typesafe-ai (one evaluation-only model, Jev, never offered for chat). A model is usable only once its provider key resolves.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/ai-providers.json:2",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/ai-providers.json:1036",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/ai-providers.json:2490",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/services/ai-model-registry.service.ts:168",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/utils/is-provider-configured.util.ts:3"
+      ],
+      "evidenceQuote": "\"apiKey\": \"{{ANTHROPIC_API_KEY}}\",",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2c-2",
+      "subQuestion": "Q2c",
+      "claim": "Native provider tools: web search for Anthropic, OpenAI and xAI models, X/Twitter search for xAI only; Google, Mistral, Bedrock, Azure and OpenAI-compatible have none. Reasoning effort is per model (catalog `efforts`, pinned as provider/model@effort); Claude 4.6+ uses adaptive thinking.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/constants/native-model-tools-by-sdk-package.const.ts:16",
+        "packages/twenty-shared/src/ai/utils/parse-ai-model-variant-id.util.ts:8",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/utils/build-reasoning-provider-options.util.ts:23",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/utils/is-adaptive-thinking-claude-model.util.ts:6"
+      ],
+      "evidenceQuote": "// Adaptive thinking is accepted from Claude 4.6 on.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2c-3",
+      "subQuestion": "Q2c",
+      "claim": "Five tiers (extraFast, fast, balanced, smart, extraSmart). agent.modelId may be a concrete id, a tier id (default-fast-model…) or workspace-default-model (workspace aiAgentModelTier, default fast). A tier resolves to the first available model in AI_MODELS_DEFAULT_<TIER>, then neighbouring tiers; workspaces can pin per tier.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/services/ai-model-registry.service.ts:585",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/services/ai-model-registry.service.ts:621",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/utils/load-default-model-preferences.util.ts:13",
+        "packages/twenty-shared/src/ai/constants/auto-select-model-id-by-tier.const.ts:6",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:2069",
+        "packages/twenty-server/src/engine/core-modules/workspace/workspace.entity.ts:348"
+      ],
+      "evidenceQuote": "// Each tier is resolved by taking the first model that is actually available, // meaning the one whose provider the instance holds a key for.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2c-4",
+      "subQuestion": "Q2c",
+      "claim": "Custom/OpenAI-compatible providers come from the AI_PROVIDERS JSON config variable (name → {npm, baseUrl, apiKey, models[]}; npm must be one of nine @ai-sdk packages) or Admin Panel → AI → Custom Providers. They are honoured only with billing enabled, a valid enterprise key, or ≤25 seats.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:2042",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/types/ai-provider-config.schema.ts:8",
+        "packages/twenty-shared/src/ai/constants/ai-sdk-packages.const.ts:1",
+        "packages/twenty-server/src/engine/core-modules/enterprise/utils/has-custom-ai-provider-access.util.ts:14",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/services/ai-model-registry.service.ts:145",
+        "packages/twenty-server/src/engine/core-modules/admin-panel/admin-panel-ai-provider.resolver.ts:66"
+      ],
+      "evidenceQuote": "isBillingEnabled || hasValidEnterprisePlan || seatCount <= MAX_SEATS_WITHOUT_ENTERPRISE_KEY;",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2c-5",
+      "subQuestion": "Q2c",
+      "claim": "This local instance has 1005 distinct active users in core.userWorkspace (the Apple seed), billing is off and no enterprise validity token row exists, so by the source rule custom AI providers would not be registered here; built-in key providers are unaffected.",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT COUNT(DISTINCT \\\"userId\\\") FROM core.\\\"userWorkspace\\\" WHERE \\\"deletedAt\\\" IS NULL;\"",
+        "packages/twenty-server/src/engine/core-modules/enterprise/services/enterprise-plan.service.ts:392",
+        "packages/twenty-server/src/engine/core-modules/enterprise/constants/max-seats-without-organization-key.constant.ts:6"
+      ],
+      "evidenceQuote": "1005",
+      "confidence": "medium"
+    },
+    {
+      "id": "Q2d-1",
+      "subQuestion": "Q2d",
+      "claim": "Env names are ANTHROPIC_API_KEY and OPENAI_API_KEY (also GOOGLE_API_KEY, XAI_API_KEY, MISTRAL_API_KEY, TYPESAFE_AI_API_KEY) in packages/twenty-server/.env, currently commented out. The .env file is loaded at boot, so the server and the worker must both be restarted.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/how-tos/ai-faq",
+        "packages/twenty-docs/user-guide/ai/how-tos/ai-faq.mdx",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1987",
+        "packages/twenty-server/.env.example:113",
+        "packages/twenty-server/src/engine/core-modules/environment/environment.module.ts:14"
+      ],
+      "evidenceQuote": "in **Settings → Admin Panel → Configuration Variables**, or in your `.env` followed by a server restart.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2d-2",
+      "subQuestion": "Q2d",
+      "claim": "Alternative without restart: a server admin sets the key at Settings → Admin Panel → Config (IS_CONFIG_VARIABLES_IN_DB_ENABLED defaults true). It is stored encrypted in core.\"keyValuePair\" (type CONFIG_VARIABLE, no workspace), overrides .env, and other processes pick it up within 15 seconds.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/twenty-config/twenty-config.service.ts:56",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/storage/config-storage.service.ts:58",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/drivers/database-config.driver.ts:124",
+        "packages/twenty-server/src/engine/core-modules/admin-panel/admin-panel.resolver.ts:430",
+        "packages/twenty-front/src/modules/settings/admin-panel/hooks/useSettingsAdminTabs.ts:44",
+        "https://docs.twenty.com/developers/self-host/capabilities/setup",
+        "packages/twenty-docs/developers/self-host/capabilities/setup.mdx"
+      ],
+      "evidenceQuote": "typeof value === 'string' && metadata?.isSensitive === true && metadata.type === ConfigVariableType.STRING",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2d-3",
+      "subQuestion": "Q2d",
+      "claim": "The unauthenticated GET /client-config shows whether a key was picked up: aiModels lists only models whose provider is configured and admin-enabled, aiModelTiers the resolved model per tier. Today both are empty here, with isBillingEnabled false and isConfigVariablesInDbEnabled true.",
+      "sourceType": "local-check",
+      "refs": [
+        "curl -s http://localhost:3000/client-config | python3 -c \"import json,sys; d=json.load(sys.stdin); print({'aiModels': len(d['aiModels']), 'aiModelTiers': d['aiModelTiers'], 'aiEvaluationModels': [(m['modelId'], m['isAvailable']) for m in d['aiEvaluationModels']], 'isBillingEnabled': d['billing']['isBillingEnabled'], 'isConfigVariablesInDbEnabled': d['isConfigVariablesInDbEnabled'], 'isOnboardingAiChatEnabled': d['isOnboardingAiChatEnabled']})\"",
+        "packages/twenty-server/src/engine/core-modules/client-config/services/client-config.service.ts:86",
+        "packages/twenty-server/src/engine/core-modules/client-config/client-config.controller.ts:14"
+      ],
+      "evidenceQuote": "{'aiModels': 0, 'aiModelTiers': [], 'aiEvaluationModels': [('typesafe-ai/jev-latest', False)], 'isBillingEnabled': False, 'isConfigVariablesInDbEnabled': True, 'isOnboardingAiChatEnabled': False}",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2d-4",
+      "subQuestion": "Q2d",
+      "claim": "With no key, AI chat is not hidden (it is gated only by the AI permission flag): the composer shows 'No AI provider is configured on this instance.' and disables Send and the tier picker; server-side, a chat turn is rejected with API_KEY_NOT_CONFIGURED.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-front/src/modules/ai/components/AiChatEditorSection.tsx:166",
+        "packages/twenty-front/src/modules/ai/components/AiChatEditorSection.tsx:224",
+        "packages/twenty-front/src/modules/navigation/components/MainNavigationDrawerContent.tsx:11",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat-turn-preflight.service.ts:35",
+        "packages/twenty-front/src/modules/ai/components/AiChatApiKeyNotConfiguredMessage.tsx:22"
+      ],
+      "evidenceQuote": "'No AI models are available. Configure at least one AI provider.',",
+      "confidence": "medium"
+    },
+    {
+      "id": "Q2d-5",
+      "subQuestion": "Q2d",
+      "claim": "On self-hosted with billing off nothing in AI is paywalled or feature-flagged: subscription checks short-circuit and AI quota defaults are empty. What remains gated: role permission flags AI and AI_SETTINGS, custom providers above 25 seats, and the admin 'AI Usage by Workspace' table (enterprise key).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/billing/services/billing-usage.service.ts:104",
+        "packages/twenty-server/src/engine/core-modules/usage-limit/constants/usage-limit-definitions.constant.ts:53",
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:1",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/resolvers/agent-chat.resolver.ts:61",
+        "packages/twenty-front/src/modules/settings/admin-panel/ai/components/SettingsAdminAI.tsx:308"
+      ],
+      "evidenceQuote": "if (!this.twentyConfigService.get('IS_BILLING_ENABLED')) { return null; }",
+      "confidence": "medium"
+    },
+    {
+      "id": "Q2e-1",
+      "subQuestion": "Q2e",
+      "claim": "Per-agent knobs in the entity: modelId, responseFormat (text, or a flat JSON schema of string/number/boolean fields, produced by a second structured-output LLM call) and modelConfiguration.webSearch/twitterSearch. There is no per-agent temperature, max-token or step setting; MAX_STEPS=300 is a global constant.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/ai/types/ModelConfiguration.ts:1",
+        "packages/twenty-shared/src/ai/types/AgentResponseSchema.ts:4",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/constants/agent-config.const.ts:1",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:351",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:528"
+      ],
+      "evidenceQuote": "export const AGENT_CONFIG = { MAX_STEPS: 300, };",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2e-2",
+      "subQuestion": "Q2e",
+      "claim": "UI exposure (agent detail tabs Settings/Role/Evals/Logs): icon, name, description, model picker, 'Enable model-specific features' (Web Search, Twitter/X Search), System Prompt, Response Format String/JSON. defineAgent exposes only modelId, responseFormat and role, so a manifest cannot enable web search; app-owned agents are read-only in UI.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentSettingsTab.tsx:112",
+        "packages/twenty-front/src/modules/ai/components/SettingsAgentModelCapabilities.tsx:92",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentFormContent.tsx:65",
+        "packages/twenty-front/src/pages/settings/ai/constants/SettingsAgentDetailTabs.ts:1",
+        "packages/twenty-shared/src/application/agentManifestType.ts:4"
+      ],
+      "evidenceQuote": "<InputLabel>{t`Enable model-specific features`}</InputLabel>",
+      "confidence": "high"
+    },
+    {
+      "id": "Q2e-3",
+      "subQuestion": "Q2e",
+      "claim": "Skills are workspace-level records (no agent↔skill link); they reach a model only in AI chat and MCP via the skill catalog and `load_skills`, not in executeAgent. Code interpreter is instance-wide (CODE_INTERPRETER_TYPE: LOCAL in dev, DISABLED in prod, or E_2_B) plus role flag CODE_INTERPRETER_TOOL.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/skill/entities/skill.entity.ts:21",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:376",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:286",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:843",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/action-tool.provider.ts:230",
+        "https://docs.twenty.com/developers/self-host/capabilities/setup",
+        "packages/twenty-docs/developers/self-host/capabilities/setup.mdx"
+      ],
+      "evidenceQuote": "[LOAD_SKILL_TOOL_NAME]: createLoadSkillTool(",
+      "confidence": "high"
+    }
+  ],
+  "docsVsSource": [
+    {
+      "topic": "Chatting with a specific (app-defined) agent",
+      "docsSay": "Document-generator tutorial: \"Open a chat with **Document Assistant** and ask it to draft a document for a person in your CRM. It finds the record, calls `generate-document`\" (no menu path given). Live page says the same.",
+      "sourceSays": "No chat API takes an agent: createChatThread() has no arguments and sendChatMessage(threadId, text, messageId, browsingContext, modelId, fileAttachments) has no agent parameter; the chat thread entity has no agentId; the front-end ai module never passes an agent to chat. Chat always runs the built-in assistant with the user's role. An app tool is reachable from that built-in chat catalog (LOGIC_FUNCTION category, named app_*), not through the app's agent.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/tutorials/document-generator/ai-agent",
+        "packages/twenty-docs/developers/extend/apps/tutorials/document-generator/ai-agent.mdx",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/resolvers/agent-chat.resolver.ts:148",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:445",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-history/standard-objects/agent-chat-thread.workspace-entity.ts:12"
+      ]
+    },
+    {
+      "topic": "runAgent runs the agent \"with its skills and tools\"",
+      "docsSay": "\"`runAgent()` lets a logic function run one of your app's agents (with its skills and tools).\"",
+      "sourceSays": "executeAgent has no skill mechanism (load_skills is created only in chat-execution.service and the MCP service) and its tool set is filtered to categories DATABASE_CRUD, ACTION, DASHBOARD, WORKFLOW, enforced again at call time by isToolAllowed; app logic-function tools (category LOGIC_FUNCTION) are therefore not callable, and with no role the agent gets no registry tools at all.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:228",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/open-ended-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:23"
+      ]
+    },
+    {
+      "topic": "Workflow AI Agent step: choosing an agent",
+      "docsSay": "\"**Agent**: Select an existing AI agent or use the default agent\"",
+      "sourceSays": "Adding the step auto-creates a dedicated custom agent (label 'Workflow Agent xxxx', prompt 'You are a helpful AI assistant. Complete the task based on the workflow context.', modelId workspace-default-model, no role). The step side panel has only Prompt and Permissions tabs (model picker, input prompt, 'Can ask questions', model features, output schema) and no agent selector; the agent id lives in step settings.input.agentId.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-actions",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-actions.mdx",
+        "packages/twenty-server/src/modules/workflow/workflow-builder/workflow-version-step/workflow-version-step-operations.workspace-service.ts:546",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/ai-agent-action/components/WorkflowEditActionAiAgent.tsx:103",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/ai-agent-action/components/WorkflowAiAgentPromptTab.tsx:147"
+      ]
+    },
+    {
+      "topic": "Agent roles vs AI chat data access",
+      "docsSay": "Overview: the chatbot \"has access to all your Twenty data\" / \"Full data access\"; \"Configure which data each AI agent can access\" under Settings → Members → Roles.",
+      "sourceSays": "Chat tools are built with the chatting user's role (roleId from buildUserAndAgentActorContext, rolePermissionConfig from the user's workspace role), so chat sees what the user may see, not everything; roles assigned to an agent apply only to executeAgent runs (workflow step, runAgent, evals). The role-assignment picker in the UI lists only isCustom agents.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/overview",
+        "packages/twenty-docs/user-guide/ai/overview.mdx",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:203",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat-actor.service.ts:141",
+        "packages/twenty-front/src/modules/settings/roles/role-assignment/components/SettingsRoleAssignmentEntityPickerDropdown.tsx:48"
+      ]
+    },
+    {
+      "topic": "Encryption of sensitive config values stored in the database",
+      "docsSay": "\"`ENCRYPTION_KEY` | Primary key used to encrypt secrets at rest (OAuth tokens, application variables, signing-key private keys, TOTP secrets, sensitive config values).\"",
+      "sourceSays": "Only sensitive variables of type STRING are encrypted on write (isSensitiveStringValue). OPENAI_API_KEY / ANTHROPIC_API_KEY qualify. AI_PROVIDERS is sensitive but type JSON, so custom-provider apiKey values saved through the admin panel are written as plain JSON to core.keyValuePair (masked only when displayed). Not verified by writing a row.",
+      "refs": [
+        "https://docs.twenty.com/developers/self-host/capabilities/setup",
+        "packages/twenty-docs/developers/self-host/capabilities/setup.mdx",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/storage/config-storage.service.ts:52",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/storage/config-storage.service.ts:103",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:2034"
+      ]
+    },
+    {
+      "topic": "AI_PROVIDERS example shape (only written example is .env.example; no docs page covers AI_PROVIDERS or AI_MODELS_DEFAULT_*)",
+      "docsSay": ".env.example: AI_PROVIDERS='{\"my-gateway\":{\"type\":\"openai-compatible\",\"baseUrl\":\"...\",\"apiKey\":\"...\"}}'",
+      "sourceSays": "The provider schema has no `type` key: it requires `npm` (e.g. '@ai-sdk/openai-compatible') and a `models` array of {name,label,...}. The registry logs 'Skipping provider \"X\": missing npm field' and registers nothing for a provider without models; {{VAR}} templates are resolved only in the bundled catalog, never in custom providers.",
+      "refs": [
+        "packages/twenty-server/.env.example:122",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/types/ai-provider-config.schema.ts:8",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/services/ai-model-registry.service.ts:155",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/services/provider-config.service.ts:29"
+      ]
+    },
+    {
+      "topic": "Where the docs explain AI key setup, and admin tab naming",
+      "docsSay": "AI FAQ: set the key in \"Settings → Admin Panel → Configuration Variables\"; models \"then appear under Settings → Admin Panel → AI\". The self-host setup page has no AI/LLM section.",
+      "sourceSays": "The admin tab is labelled 'Config' (id config-variables) at this tag; detail URL is /settings/admin-panel/config-variables/<VARIABLE_NAME>, also linked from Admin Panel → AI → provider → 'API Key'. The chat error banner 'Add an API key to enable AI.' sends users to the self-host setup page, which does not mention any AI key. The FAQ's provider list omits typesafe-ai (TYPESAFE_AI_API_KEY, evaluation model for the Classify step).",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/how-tos/ai-faq",
+        "packages/twenty-docs/user-guide/ai/how-tos/ai-faq.mdx",
+        "packages/twenty-front/src/modules/settings/admin-panel/hooks/useSettingsAdminTabs.ts:44",
+        "packages/twenty-front/src/pages/settings/admin-panel/SettingsAdminAiProviderDetail.tsx:225",
+        "packages/twenty-front/src/modules/ai/components/AiChatApiKeyNotConfiguredMessage.tsx:15"
+      ]
+    }
+  ],
+  "unclear": [
+    {
+      "topic": "Do the shipped default tier models work with a real key?",
+      "why": "The tier chains point at ids such as anthropic/claude-sonnet-5@medium and openai/gpt-5.6-luna@medium (load-default-model-preferences.util.ts:13-49, all present in ai-providers.json). Whether the provider accepts them with the user's key can only be checked with a real API key, which this phase did not have. If one is rejected, pin another via Admin Panel → AI → Default Models (setAdminDefaultAiModel) or AI_MODELS_DEFAULT_<TIER>."
+    },
+    {
+      "topic": "Any supported way to chat with a named agent",
+      "why": "Docs (tag and live) say 'Open a chat with Document Assistant'. I found no such path in source: chat resolver args, chat thread entity, and twenty-front/src/modules/ai contain no agent selection. The UI was not opened (browser use forbidden in this phase), so a hidden entry point cannot be fully excluded."
+    },
+    {
+      "topic": "Pointing a workflow AI Agent step at an existing or app-defined agent",
+      "why": "The executor reads agentId from step settings.input (ai-agent.workflow-action.ts:75-84), so changing it through the workflow-step API looks possible, but the UI has no agent picker and I did not test it. Docs claim a selector exists."
+    },
+    {
+      "topic": "Can updateOneAgent modify an app-owned agent (e.g. to enable web search)?",
+      "why": "The manifest cannot set modelConfiguration and the UI makes app-owned agents read-only (isOwnedByInstalledApplication). The server validator only blocks Twenty-standard agents (flat-agent-validator.service.ts:151-164); I found no explicit ownership check for other apps' agents, and whether the next app sync would revert the change is untested."
+    },
+    {
+      "topic": "Custom provider gate on this instance",
+      "why": "Inferred from source rule + local seat count (1005 > 25, billing off, no enterprise token). The authoritative check, admin query getCustomAiProviderAccess, needs an admin login and was not run. Also untested: whether an AI_PROVIDERS value set in .env is honoured below 25 seats, and the exact JSON shape accepted (the .env.example sample uses `type`, the schema requires `npm` + `models`)."
+    },
+    {
+      "topic": "Config propagation timing to the worker",
+      "why": "AI chat turns run in the worker (queue aiStreamQueue). Docs and the 15-second cron in DatabaseConfigDriver say a DB-stored key reaches other processes within 15 s; I did not test it. For .env changes I assume both server and worker need a restart because the env file is loaded once at boot (environment.module.ts:14-19)."
+    },
+    {
+      "topic": "UI behaviour described from front-end source only",
+      "why": "Banner texts, disabled Send button, admin tab labels, the missing 'New Agent' entry point and the agent detail tabs were read in twenty-front source, not observed in a browser. 'No link to /settings/ai/new-agent' is a grep-based absence finding."
+    },
+    {
+      "topic": "runAgent called by a user session or API key",
+      "why": "agent-run.service.ts only restricts application callers to their own agents, so a user/API-key caller with the AI flag appears able to run any agent by universalIdentifier; not tested. The Agent GraphQL type does not expose universalIdentifier, so for API-created agents it must be read from core.agent."
+    },
+    {
+      "topic": "Live docs drift",
+      "why": "Compared five live pages with the tag (skills-and-agents, ai-faq, ai-agents, self-host setup, document-generator/ai-agent): no differences found. Other pages (workflow-actions, AI overview, permissions) were read only from the repo."
+    }
+  ],
+  "unstable": [
+    {
+      "item": "Skills and agents in apps are officially alpha",
+      "evidence": "Docs warning: \"Skills and agents are currently in alpha. The feature works but is still evolving.\"",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx"
+      ]
+    },
+    {
+      "item": "Text response format is slated for removal",
+      "evidence": "\"TODO: Remove text response format support once prod migration upgrades legacy agents to JSON format.\" and \"TODO: Remove string option once text response format support is fully dropped.\" defineAgent still defaults to {type:'text'} and warns when it is omitted; entity column comment says \"Should not be nullable\".",
+      "refs": [
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentResponseFormat.tsx:52",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentResponseFormat.tsx:74",
+        "packages/twenty-sdk/src/sdk/define/agents/define-agent.ts:28",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/entities/agent.entity.ts:53"
+      ]
+    },
+    {
+      "item": "Hardcoded default model chains and a daily-synced model catalog",
+      "evidence": "\"TODO: derive default model preferences dynamically from the catalog instead of hardcoding model IDs that become stale as models evolve\". ai-providers.json is generated daily from models.dev, so model ids and tier defaults change between releases. Example of staleness: the extraSmart chain names xai/grok-4.6@xhigh, but the xAI SDK effort list only allows low/medium/high, so that variant never registers.",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/utils/load-default-model-preferences.util.ts:1",
+        "packages/twenty-server/scripts/ai-catalog-sync/README.md:19",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/constants/ai-sdk-package-efforts.const.ts:64"
+      ]
+    },
+    {
+      "item": "runAgent input validation is not enforced yet",
+      "evidence": "\"TODO(@abdulrahmancodes): install ResolverValidationPipe here; without it every class-validator decorator on RunAgentInputDTO is inert.\"",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/resolvers/agent-run.resolver.ts:43"
+      ]
+    },
+    {
+      "item": "Agent management UI is half-hidden",
+      "evidence": "Routes ai/new-agent and ai/agents/:agentId exist, but Settings → AI has no Agents tab and nothing links to the create form; agents are listed only in role assignment, usage-limit pickers and installed-app content. Suggests the surface is being reshaped.",
+      "refs": [
+        "packages/twenty-shared/src/types/SettingsPath.ts:49",
+        "packages/twenty-front/src/pages/settings/ai/constants/SettingsAiTabs.ts:1",
+        "packages/twenty-front/src/modules/app/components/SettingsRoutes.tsx:878"
+      ]
+    },
+    {
+      "item": "Leftover multi-agent routing UI with no server emitter",
+      "evidence": "The 'routing-status' message part type and RoutingStatusDisplay/RoutingDebugDisplay components remain, but no server code emits data-routing-status (only DB/UI mappers reference it).",
+      "refs": [
+        "packages/twenty-shared/src/ai/types/DataMessagePart.ts:45",
+        "packages/twenty-front/src/modules/ai/components/RoutingStatusDisplay.tsx:60",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/utils/mapDBPartToUIMessagePart.ts:57"
+      ]
+    },
+    {
+      "item": "Standard `helper` agent looks vestigial",
+      "evidence": "STANDARD_AGENT is referenced only by the standard-application builders; nothing runs it. Its prompt tells it to use search_help_center, which is in WORKFLOW_AGENT_EXCLUDED_TOOL_NAMES, and it has no role, so executeAgent would give it no tools.",
+      "refs": [
+        "packages/twenty-server/src/engine/workspace-manager/twenty-standard-application/constants/standard-agent.constant.ts:1",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-excluded-tool-names.const.ts:3"
+      ]
+    },
+    {
+      "item": "Custom AI providers sit behind enterprise-licensed code and a seat gate",
+      "evidence": "Files carry \"/* @license Enterprise */\"; access = billing enabled OR valid enterprise plan OR seatCount <= 25, re-evaluated hourly, and custom models silently disappear from the registry when the gate closes.",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/enterprise/services/custom-ai-provider-access.service.ts:1",
+        "packages/twenty-server/src/engine/core-modules/admin-panel/services/admin-panel-ai-provider.service.ts:1",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/services/ai-model-registry.service.ts:116"
+      ]
+    },
+    {
+      "item": "GROQ_API_KEY config variable without a provider",
+      "evidence": "GROQ_API_KEY is declared in the LLM group and in .env.example, but the bundled catalog has no groq provider and nothing reads the variable.",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:2014",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/ai-self-host-spec.json:1"
+      ]
+    },
+    {
+      "item": "AI-related feature flags and toggles still in flux",
+      "evidence": "FeatureFlagKey contains IS_AI_CHAT_SHARING_DROPDOWN_ENABLED and IS_CONVERSATIONS_TAB_ENABLED (both false in the local seed; the latter adds the attach_conversation_to_record tool to chat); IS_ONBOARDING_AI_CHAT_ENABLED is a config variable (false here).",
+      "refs": [
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:12",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:306",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:2331"
+      ]
+    }
+  ],
+  "localTestPlan": [
+    {
+      "goal": "Baseline: confirm no LLM provider is configured and where that shows up (no login needed)",
+      "steps": [
+        "curl -s http://localhost:3000/client-config | python3 -c \"import json,sys; d=json.load(sys.stdin); print(len(d['aiModels']), d['aiModelTiers'], d['billing']['isBillingEnabled'], d['isConfigVariablesInDbEnabled'])\"",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT key FROM core.\\\"keyValuePair\\\" WHERE type='CONFIG_VARIABLE' AND \\\"workspaceId\\\" IS NULL AND \\\"userId\\\" IS NULL ORDER BY key;\""
+      ],
+      "expected": "Step 1 prints `0 [] False True`. Step 2 lists SERVER_ID only (no *_API_KEY and no AI_PROVIDERS row). Observed in this phase.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "No-key user experience in the UI",
+      "steps": [
+        "Log in at http://localhost:3002 as tim@apple.dev.",
+        "Open the AI chat (navigation drawer mode 'AI' or the side panel) and look at the composer.",
+        "Open http://localhost:3002/settings/ai and note the tabs.",
+        "Open http://localhost:3002/settings/ai/new-agent (route exists, not linked from the UI)."
+      ],
+      "expected": "Chat is visible; composer shows the inline banner 'No AI provider is configured on this instance.' with Send and the model-tier dropdown disabled. Settings → AI shows tabs Overview, Models, Skills, Tools, Usage and no agent list. The New Agent form shows 'No AI provider is configured on this instance.' where the model picker would be.",
+      "needsLlmKey": false,
+      "needsBrowser": true,
+      "mutatesData": false
+    },
+    {
+      "goal": "Point the instance at an Anthropic or OpenAI key through the Admin Panel (no restart, no repo file touched) and verify pickup",
+      "steps": [
+        "STOP and ask the user for an Anthropic or OpenAI API key; never echo it into logs or notes.",
+        "As tim@apple.dev open http://localhost:3002/settings/admin-panel/config-variables/ANTHROPIC_API_KEY (or Settings → Admin Panel → AI → Providers → Anthropic → API Key → Configure), paste the key, save. API alternative with an admin session token: POST http://localhost:3000/admin-panel  mutation { createDatabaseConfigVariable(key: \"ANTHROPIC_API_KEY\", value: \"<KEY>\") }",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT key, left(value::text, 5) FROM core.\\\"keyValuePair\\\" WHERE key IN ('ANTHROPIC_API_KEY','OPENAI_API_KEY') AND \\\"workspaceId\\\" IS NULL;\"",
+        "Wait 15 seconds, then: curl -s http://localhost:3000/client-config | python3 -c \"import json,sys; d=json.load(sys.stdin); print(len(d['aiModels']), sorted({m['providerName'] for m in d['aiModels']}), d['aiModelTiers'])\"",
+        "Settings → Admin Panel → AI: check the provider row status and that a 'Default Models' section appears; Settings → AI → Models shows the tier preview.",
+        "Cleanup when the whole exploration is finished: mutation { deleteDatabaseConfigVariable(key: \"ANTHROPIC_API_KEY\") } on /admin-panel, or clear the value in the Config tab."
+      ],
+      "expected": "SQL prints `ANTHROPIC_API_KEY|\"enc:` (encrypted envelope; the value is not readable). client-config now reports aiModels > 0 from the single provider and five tiers; per the shipped defaults fast resolves to anthropic/claude-sonnet-5@medium (OpenAI: openai/gpt-5.6-luna@medium). The provider row shows 'Configured'. No server restart is needed.",
+      "needsLlmKey": true,
+      "needsBrowser": true,
+      "mutatesData": true
+    },
+    {
+      "goal": "Alternative: key through .env plus restart (shows env is read only at boot)",
+      "steps": [
+        "Add one line ANTHROPIC_API_KEY=<KEY> (or OPENAI_API_KEY=<KEY>) to /Users/bussss/projects/twenty/packages/twenty-server/.env (git-ignored).",
+        "Before restarting, re-run the client-config curl from the baseline test.",
+        "Stop `npx nx start` with Ctrl+C and start it again from /Users/bussss/projects/twenty (restarts server and worker).",
+        "Re-run the client-config curl."
+      ],
+      "expected": "Before restart: still `0 []`. After restart: aiModels > 0 and five tiers. If a DB value for the same variable exists it wins over .env.",
+      "needsLlmKey": true,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Show that AI chat runs the built-in assistant (no agent entity) under the user's role",
+      "steps": [
+        "In the browser AI chat send: PN test: reply with the single word OK",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c \"SELECT t.title, (SELECT count(*) FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentTurn\\\" tu WHERE tu.\\\"threadId\\\" = t.id AND tu.\\\"agentId\\\" IS NOT NULL) FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentChatThread\\\" t ORDER BY t.\\\"createdAt\\\" DESC LIMIT 3;\"",
+        "With the user's access token, POST http://localhost:3000/metadata  query { getAiSystemPromptPreview { estimatedTokenCount sections { title estimatedTokenCount } } }",
+        "Optional: Settings → AI → Overview → Workspace Instructions: enter 'PN: end every answer with [PN]', repeat step 3 and send another chat message; clear the field afterwards."
+      ],
+      "expected": "The answer streams (the worker must be running). The PN thread has 0 turns with an agentId. The preview lists sections Base Instructions, Response Format, User Context, Tool Catalog, Skill Catalog, plus Workspace Instructions once set; the chat answer then ends with [PN].",
+      "needsLlmKey": true,
+      "needsBrowser": true,
+      "mutatesData": true
+    },
+    {
+      "goal": "Create a custom agent through GraphQL and run it by id (eval path), without building an app",
+      "steps": [
+        "Optionally save request bodies under /Users/bussss/projects/twenty-playground/pn-agent-requests/.",
+        "POST http://localhost:3000/metadata with a user session token that has AI_SETTINGS (tim@apple.dev): mutation { createOneAgent(input: { label: \"PN Test Agent\", prompt: \"You are a test agent. Answer in one short sentence.\", modelId: \"workspace-default-model\", responseFormat: { type: \"text\" } }) { id name modelId isCustom roleId applicationId } }",
+        "mutation { runEvaluationInput(agentId: \"<ID>\", input: \"PN: say hello\") { id threadId } }   (user session only; API keys are refused for this mutation)",
+        "Poll: query { agentTurns(agentId: \"<ID>\") { id messages { role parts { type textContent toolName } } evaluations { score comment } } }",
+        "Open http://localhost:3002/settings/ai/agents/<ID> and note the tabs and the fields on the Settings tab.",
+        "Cleanup at the end: mutation { deleteOneAgent(input: { id: \"<ID>\" }) { id } }"
+      ],
+      "expected": "createOneAgent returns isCustom true, roleId null and a name derived from the label. Within about a minute the turn has an assistant message whose text is JSON like {\"response\":\"...\"} and no tool parts (the agent has no role). The detail page shows tabs Settings / Role / Evals / Logs with icon, name, description, model picker, model-specific features, System Prompt and Response Format.",
+      "needsLlmKey": true,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "runAgent by universalIdentifier, the server-side prompt wrapper, and JSON response format",
+      "steps": [
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT \\\"universalIdentifier\\\" FROM core.agent WHERE label = 'PN Test Agent' AND \\\"deletedAt\\\" IS NULL;\"   (the Agent GraphQL type does not expose it)",
+        "mutation { runAgent(input: { agentUniversalIdentifier: \"<UID>\", prompt: \"PN: list the names of every tool you can call, or say NONE. Then quote the first line of your instructions.\" }) { success error result } }",
+        "mutation { updateOneAgent(input: { id: \"<ID>\", responseFormat: { type: \"json\", schema: { type: \"object\", properties: { verdict: { type: \"string\", description: \"OK or NOT_OK\" }, score: { type: \"number\" } }, required: [\"verdict\", \"score\"], additionalProperties: false } } }) { id responseFormat } }",
+        "Repeat the runAgent call with prompt \"PN: verdict OK, score 7\"."
+      ],
+      "expected": "First run: success true, result {response: ...}; the agent reports no CRM tools (no role means no registry tools) and its instructions start with 'You are an AI agent in Twenty CRM, invoked programmatically to complete a request.' Second run: result is an object with exactly the keys verdict and score.",
+      "needsLlmKey": true,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Model id handling without spending tokens (catalog membership, tier ids, custom-provider message)",
+      "steps": [
+        "mutation { updateOneAgent(input: { id: \"<ID>\", modelId: \"pn/does-not-exist\" }) { id } }",
+        "mutation { updateOneAgent(input: { id: \"<ID>\", modelId: \"default-smart-model\" }) { modelId } }",
+        "Set a catalog model of a provider that has no key, e.g. modelId: \"openai/gpt-5.6-luna\" when only Anthropic is configured, then call runAgent once.",
+        "Restore: mutation { updateOneAgent(input: { id: \"<ID>\", modelId: \"workspace-default-model\" }) { modelId } }"
+      ],
+      "expected": "Step 1 is rejected with a model-not-found error (on this 1005-seat instance the server message may add 'Custom AI providers require a valid enterprise key above 25 seats'). Step 2 succeeds. Step 3: the save succeeds because catalog membership is enough, but runAgent returns success false with error 'Agent execution failed.'",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Confirm the custom-provider (OpenAI-compatible / local model) gate on this instance",
+      "steps": [
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT COUNT(DISTINCT \\\"userId\\\") FROM core.\\\"userWorkspace\\\" WHERE \\\"deletedAt\\\" IS NULL;\"",
+        "With an admin session token, POST http://localhost:3000/admin-panel  query { getCustomAiProviderAccess { hasAccess seatCount seatThreshold } }",
+        "Browser: Settings → Admin Panel → AI → 'Custom Providers' section."
+      ],
+      "expected": "SQL prints 1005. The query returns hasAccess false, seatCount 1005, seatThreshold 25. The UI shows an 'Organization feature' gate card and no 'Add Custom Provider' button. Conclusion to record: a local/OpenAI-compatible model cannot be used on the seeded instance without an enterprise key.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "See which tool categories exist versus what agent-entity runs may use (no LLM)",
+      "steps": [
+        "With a user access token, POST http://localhost:3000/metadata  query { getToolIndex { name category } }  and group the result by category.",
+        "After an app that exposes a tool is installed (Question 1), repeat and look for names starting with app_ in category LOGIC_FUNCTION.",
+        "Compare with packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-registry-tool-categories.const.ts and open-ended-agent-registry-tool-categories.const.ts.",
+        "With a key: give 'PN Test Agent' a PN role that can be assigned to agents, then ask via runAgent 'call execute_tool for app_<tool name>' and ask the same in AI chat."
+      ],
+      "expected": "The index contains DATABASE_CRUD, ACTION, WORKFLOW, METADATA, VIEW, DASHBOARD, NAVIGATION_MENU_ITEM, WEBHOOK, ROLE and, once an app tool exists, LOGIC_FUNCTION entries named app_*. Agent runs are limited to DATABASE_CRUD+ACTION (workflow step) or +DASHBOARD+WORKFLOW (runAgent): the runAgent attempt should answer that the tool is not available, while AI chat can call it.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Workflow 'AI Agent' step: implicit agent creation, role creation and exposed knobs",
+      "steps": [
+        "Browser: create a workflow named 'PN workflow', add an action of type 'AI Agent'.",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c \"SELECT a.label, a.\\\"modelId\\\", a.\\\"isCustom\\\", (SELECT count(*) FROM core.\\\"roleTarget\\\" rt WHERE rt.\\\"agentId\\\" = a.id) FROM core.agent a WHERE a.label LIKE 'Workflow Agent%' AND a.\\\"deletedAt\\\" IS NULL;\"",
+        "In the step side panel inspect the Prompt tab (model picker, Input (Prompt), Can ask questions, Enable model-specific features, output schema) and the Permissions tab; add one object permission and re-run the SQL.",
+        "Use the footer menu 'View agent' to open the agent detail page.",
+        "Cleanup: delete the PN workflow (and the generated '<agent> role (xxxxxxxx)' role if it remains)."
+      ],
+      "expected": "A new row 'Workflow Agent xxxx' with workspace-default-model, isCustom true and 0 role links; after adding a permission the count becomes 1 and a role named '<agent label> role (<8 chars>)' exists. There is no control to pick an existing agent. Web Search / Twitter-X Search checkboxes appear only when the resolved model is Anthropic, OpenAI or xAI.",
+      "needsLlmKey": false,
+      "needsBrowser": true,
+      "mutatesData": true
+    }
+  ]
+}

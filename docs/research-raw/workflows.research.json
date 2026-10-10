@@ -1,0 +1,661 @@
+{
+  "area": "Workflows, human-in-the-loop approval, and audit trail of agent actions (Question 4)",
+  "summary": "There is no 'manual approval' step in v2.44: among 4 trigger types and 20 action types the closest is FORM, which leaves its step PENDING while the run stays RUNNING (the documented 'Waiting' status does not exist) until any user with the WORKFLOWS permission who can read the run submits it through answerToolCall; there is no assignee, required field, timeout or reject, only stopWorkflowRun. For agents the only built-in human gates are three hard-coded pausing tools (ask_questions, request_form, propose_email), offered in AI chat and, new and undocumented in 2.44, in workflow AI_AGENT steps with canAskQuestions; only propose_email defers a write (an email), while record create/update/delete tools run immediately in chat, workflows and MCP. A hard gate on record writes therefore has to be composed in a workflow (AI_AGENT with a read-only role and structured output, then FORM, FILTER/IF_ELSE, CREATE/UPDATE_RECORD); the pieces are confirmed in source but the chain was not executed, the form cannot display the proposal, and apps cannot add pausing tools or new action types without forking. Audit data exists but is scattered: createdBy/updatedBy actors (AGENT, API, WORKFLOW, APPLICATION, MANUAL and others, no MCP source, updatedBy following the auth context), timelineActivity rows (field diff and member only), chat tool calls in agentMessagePart, workflow step results and logs in workflowRun.state/stepLogs, and the approver's identity only in the run's conversation thread. None of this is a durable audit log: completed and failed runs with their conversations are hard-deleted after 14 days or beyond 1000 per workflow once crons are registered, MCP tool calls are not persisted, and the ClickHouse-backed event logs (partly Enterprise-gated) are unavailable on this instance. Read-only local checks confirmed the paused-form state on seeded runs and the GraphQL operations; the mutating 'PN approval test' case and the LLM variants are specified in the test plan and still have to be run. The live docs pages checked (workflow-actions, workflow-runs, core-concepts/ai, ai-agents) match the repo copies at this tag for the statements quoted.",
+  "findings": [
+    {
+      "id": "F01",
+      "subQuestion": "Q4a",
+      "claim": "Trigger types: DATABASE_EVENT, MANUAL, CRON, WEBHOOK. Action types (20): CODE, LOGIC_FUNCTION, SEND_EMAIL, DRAFT_EMAIL, CREATE_CALENDAR_EVENT, CREATE_RECORD, UPDATE_RECORD, DELETE_RECORD, UPSERT_RECORD, FIND_RECORDS, PICK_RECORD, FORM, FILTER, IF_ELSE, HTTP_REQUEST, AI_AGENT, CLASSIFY, ITERATOR, EMPTY, DELAY. No approval type; FORM is closest.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/workflow/types/WorkflowActionType.ts:1",
+        "packages/twenty-shared/src/workflow/schemas/base-trigger-schema.ts:11",
+        "packages/twenty-server/src/modules/workflow/workflow-trigger/types/workflow-trigger.type.ts:9",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/factories/workflow-action.factory.ts:56"
+      ],
+      "evidenceQuote": ".enum(['DATABASE_EVENT', 'MANUAL', 'CRON', 'WEBHOOK'])",
+      "confidence": "high"
+    },
+    {
+      "id": "F02",
+      "subQuestion": "Q4a",
+      "claim": "At runtime a FORM step records a request_form call in a conversation owned by the run and returns pendingEvent; the executor marks the step PENDING and stops there. The run stays RUNNING: WorkflowRunStatus has no WAITING value.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/form/form.workflow-action.ts:40",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workspace-services/workflow-executor.workspace-service.ts:467",
+        "packages/twenty-server/src/modules/workflow/common/standard-objects/workflow-run.workspace-entity.ts:19"
+      ],
+      "evidenceQuote": "return { pendingEvent: true };",
+      "confidence": "high"
+    },
+    {
+      "id": "F03",
+      "subQuestion": "Q4a",
+      "claim": "Seeded Apple run '#3 - Approve discount' (manual trigger then FORM) is stored with status RUNNING, its form step PENDING with a threadId, and that thread still waiting. Run #1 shows the answered state (COMPLETED/SUCCESS), run #2 the stopped one (STOPPED/FAILED).",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT r.name, r.status, s.value->>'status' AS step_status, s.value->>'threadId' AS thread_id, t.\\\"pendingQuestionMessageId\\\" IS NOT NULL AS thread_waiting FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"workflowRun\\\" r, jsonb_each(r.state->'stepInfos') s LEFT JOIN workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentChatThread\\\" t ON t.id::text = s.value->>'threadId' WHERE s.key <> 'trigger' ORDER BY r.name;\""
+      ],
+      "evidenceQuote": "#3 - Approve discount|RUNNING|PENDING|51e301d4-035a-4363-87be-a12d8499a258|t",
+      "confidence": "high"
+    },
+    {
+      "id": "F04",
+      "subQuestion": "Q4a",
+      "claim": "A form is answered with answerToolCall(input: {threadId, toolCallId: <form step id>, response}) on /graphql; submitFormStep is deprecated. The caller must be a user (API keys refused), hold the WORKFLOWS permission flag and be able to read the run. There is no assignee.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-tool-call-answer/resolvers/tool-call-answer.resolver.ts:49",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-tool-call-answer/resolvers/tool-call-answer.resolver.ts:66",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-tool-call-answer/services/tool-call-answer.service.ts:545",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/form-action/hooks/useAnswerFormStep.ts:55"
+      ],
+      "evidenceQuote": "The same permission that lets someone run a workflow, on a run they can read.",
+      "confidence": "high"
+    },
+    {
+      "id": "F05",
+      "subQuestion": "Q4a",
+      "claim": "Unauthenticated introspection of the running /graphql endpoint lists answerToolCall(input: AnswerToolCallInput!) with fields threadId, toolCallId, response, modelId, marks submitFormStep as deprecated, and exposes runWorkflowVersion, activateWorkflowVersion, stopWorkflowRun, retryWorkflowRun and updateWorkflowRunStep.",
+      "sourceType": "local-check",
+      "refs": [
+        "curl -s -m 20 -X POST http://localhost:3000/graphql -H 'Content-Type: application/json' -d '{\"query\":\"{ __type(name: \\\"Mutation\\\") { fields(includeDeprecated: true) { name isDeprecated deprecationReason } } }\"}'",
+        "curl -s -m 20 -X POST http://localhost:3000/graphql -H 'Content-Type: application/json' -d '{\"query\":\"{ __type(name: \\\"AnswerToolCallInput\\\") { inputFields { name type { kind name ofType { kind name } } } } }\"}'  (equivalent to the command run; output was piped through a small python formatter)"
+      ],
+      "evidenceQuote": "{\"name\":\"submitFormStep\",\"isDeprecated\":true,\"deprecationReason\":\"Use answerToolCall with the step's thread and the step id as toolCallId\"}",
+      "confidence": "high"
+    },
+    {
+      "id": "F06",
+      "subQuestion": "Q4a",
+      "claim": "Submitted values are only checked for unknown field names (nothing is required). They become the form step's result with status SUCCESS in workflowRun.state.stepInfos (RECORD picks expanded to full records) and downstream steps read them as {{<formStepId>.<fieldName>}}.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/pausing-tools/request-form.pausing-tool.ts:19",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workspace-services/workflow-runner.workspace-service.ts:146",
+        "packages/twenty-server/src/modules/workflow/workflow-builder/workflow-version-step/workflow-version-step-operations.workspace-service.ts:712",
+        "packages/twenty-shared/src/workflow/utils/getWorkflowRunContext.ts:4"
+      ],
+      "evidenceQuote": "message: `The form has no field named ${fieldName}.`,",
+      "confidence": "high"
+    },
+    {
+      "id": "F07",
+      "subQuestion": "Q4a",
+      "claim": "A pending form has no timeout, expiry or reject action: it ends only by submission or stopWorkflowRun (run STOPPED, step FAILED). Meanwhile updateWorkflowRunStep lets any user with the WORKFLOWS flag replace any step JSON of the unfinished run.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/workspace-services/workflow-handle-staled-runs.workspace-service.ts:121",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/workspace-services/workflow-handle-staled-runs.workspace-service.ts:257",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workspace-services/workflow-runner.workspace-service.ts:180",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run/workflow-run.workspace-service.ts:741",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run/workflow-run.workspace-service.ts:551",
+        "packages/twenty-server/src/engine/core-modules/workflow/resolvers/workflow-version-step.resolver.ts:185"
+      ],
+      "evidenceQuote": "Monitoring mode: stuck RUNNING runs are only flagged, never finalized.",
+      "confidence": "high"
+    },
+    {
+      "id": "F08",
+      "subQuestion": "Q4a",
+      "claim": "Docs: forms are designed for manual triggers; after launching from Cmd+K the form opens in the side panel. For other triggers it is reachable only from the workflow run view (no notification yet), and fields cannot be made mandatory.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-actions",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-actions.mdx:225",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/components/WorkflowRunStepNodeDetail.tsx:228",
+        "packages/twenty-front/src/modules/workflow/hooks/useRunWorkflowVersion.tsx:184"
+      ],
+      "evidenceQuote": "forms are only accessible via the workflow run interface, which is not the expected user experience. A notification center will be released in 2026",
+      "confidence": "high"
+    },
+    {
+      "id": "F09",
+      "subQuestion": "Q4a",
+      "claim": "Form fields are TEXT, NUMBER, DATE, SELECT, MULTI_SELECT or RECORD; selects can only reuse an existing object field's options. The step passes settings.input unresolved, so labels and placeholders are static and cannot show a previous step's output such as an agent's proposal.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/workflow/schemas/form-action-settings-schema.ts:9",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/form/form.workflow-action.ts:45",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/form-action/components/WorkflowFormFieldSettingsSelect.tsx:35",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/form-action/components/WorkflowFormFields.tsx:67"
+      ],
+      "evidenceQuote": "fields: step.settings.input,",
+      "confidence": "high"
+    },
+    {
+      "id": "F10",
+      "subQuestion": "Q4b",
+      "claim": "Agent tool calls have no generic approval or confirmation step: execute_tool resolves the tool and dispatches it immediately, and create_one / update_one / delete_one call the record services directly. A record write is applied as soon as the model calls the tool.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/tools/execute-tool.tool.ts:68",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:339",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:158",
+        "packages/twenty-front/src/modules/ai/types/AgentChatPendingToolCall.ts:7"
+      ],
+      "evidenceQuote": "return toolRegistry.resolveAndExecute(toolName, args, context, {",
+      "confidence": "high"
+    },
+    {
+      "id": "F11",
+      "subQuestion": "Q4b",
+      "claim": "Built-in human-in-the-loop is three hard-coded pausing tools (ask_questions, request_form, propose_email): calling one ends the turn until a person answers through answerToolCall. Only propose_email defers a write; on send or saveDraft it runs send_email/draft_email as the approver.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/pausing-tools/constants/pausing-tools.constant.ts:12",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/pausing-tools/propose-email.pausing-tool.ts:52",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/pausing-tools/propose-email.pausing-tool.ts:81",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:321"
+      ],
+      "evidenceQuote": "Tools whose call ends the turn until a person submits its output through answerToolCall.",
+      "confidence": "high"
+    },
+    {
+      "id": "F12",
+      "subQuestion": "Q4b",
+      "claim": "In workflows an AI_AGENT step receives the pausing tools only when settings.input.canAskQuestions is true (off by default). When the agent calls one, the step becomes PENDING; answering enqueues a job that resumes the agent from the stored conversation.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts:154",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts:206",
+        "packages/twenty-shared/src/workflow/schemas/ai-agent-action-settings-schema.ts:9",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workspace-services/workflow-runner.workspace-service.ts:102",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/jobs/run-workflow.job.ts:225"
+      ],
+      "evidenceQuote": "Off by default: an agent that can ask pauses its run until someone answers, which existing workflows were not built to expect.",
+      "confidence": "high"
+    },
+    {
+      "id": "F13",
+      "subQuestion": "Q4b",
+      "claim": "Composed, not built-in: AI_AGENT step (agent role with read-only grants, JSON responseFormat) then FORM, FILTER/IF_ELSE and CREATE/UPDATE_RECORD. Agent tools come only from its role's explicit object grants, and step results are addressable as {{stepId.field}}. Not run end-to-end here.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:359",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:172",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:516",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:161",
+        "packages/twenty-shared/src/workflow/utils/getWorkflowRunContext.ts:4"
+      ],
+      "evidenceQuote": "Registry tools are scoped exclusively by the agent permission-tab role. No role means no registry tools.",
+      "confidence": "medium"
+    },
+    {
+      "id": "F14",
+      "subQuestion": "Q4b",
+      "claim": "AI-built workflows are drafts only by default: create_complete_workflow has activate (default false), and the same toolset offers activate_workflow_version to any role holding the WORKFLOWS permission flag. The draft state is therefore a default, not an enforced human gate.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-tools/tools/create-complete-workflow.tool.ts:47",
+        "packages/twenty-server/src/modules/workflow/workflow-tools/tools/activate-workflow-version.tool.ts:23",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/workflow-tool.provider.ts:36"
+      ],
+      "evidenceQuote": ".describe('Whether to activate the workflow immediately (default: false)'),",
+      "confidence": "high"
+    },
+    {
+      "id": "F15",
+      "subQuestion": "Q4c",
+      "claim": "createdBy/updatedBy are ACTOR fields with sources EMAIL, CALENDAR, WORKFLOW, AGENT, API, IMPORT, MANUAL, SYSTEM, WEBHOOK, APPLICATION (no MCP). On create, chat agents stamp AGENT with the user's name, MCP stamps AGENT with the API-key or member name, workflow steps stamp the manual initiator or 'Workflow'.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/types/composite-types/actor.composite-type.ts:8",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-actor-context.service.ts:99",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:194",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/utils/build-workflow-actor-metadata.util.ts:5",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:163"
+      ],
+      "evidenceQuote": "source: FieldActorSource.AGENT,",
+      "confidence": "high"
+    },
+    {
+      "id": "F16",
+      "subQuestion": "Q4c",
+      "claim": "updatedBy is always rebuilt from the auth context by the create/update pre-query hooks; UpdateRecordService never reads its updatedBy parameter. Updates made by an agent or workflow acting as a user are therefore stamped {MANUAL, that user}. Read from code, not checked on live data.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/actor/services/actor-from-auth-context.service.ts:144",
+        "packages/twenty-server/src/engine/core-modules/actor/services/actor-from-auth-context.service.ts:148",
+        "packages/twenty-server/src/engine/core-modules/record-crud/services/update-record.service.ts:27",
+        "packages/twenty-server/src/engine/core-modules/record-crud/types/update-record-execution-context.type.ts:6",
+        "packages/twenty-server/src/engine/core-modules/actor/utils/build-created-by-from-full-name-metadata.util.ts:15"
+      ],
+      "evidenceQuote": "record[fieldName] = actorMetadata;",
+      "confidence": "medium"
+    },
+    {
+      "id": "F17",
+      "subQuestion": "Q4c",
+      "claim": "Record changes produce timelineActivity rows asynchronously: activity type snapshot, properties holding only the field diff (empty on create), happensAt, target record and workspaceMemberId taken from the event's user. No actor source is stored; fields with isAuditLogged false are excluded. Shown in the record Timeline.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/timeline/services/timeline-activity.service.ts:52",
+        "packages/twenty-server/src/modules/timeline/services/timeline-activity.service.ts:290",
+        "packages/twenty-server/src/modules/timeline/services/timeline-activity.service.ts:490",
+        "packages/twenty-server/src/modules/timeline/standard-objects/timeline-activity.workspace-entity.ts:19",
+        "packages/twenty-server/src/modules/timeline/utils/exclude-non-audit-logged-fields-from-events.util.ts:16",
+        "packages/twenty-server/src/engine/twenty-orm/utils/format-twenty-orm-event-to-database-batch-event.util.ts:160"
+      ],
+      "evidenceQuote": "Only the diff is worth storing: the rest of an event payload is the record itself, which the timeline reads live.",
+      "confidence": "high"
+    },
+    {
+      "id": "F18",
+      "subQuestion": "Q4c",
+      "claim": "The event-logs module is a ClickHouse pipeline (workspaceEvent, pageview, objectEvent, usageEvent, applicationLog) read through the eventLogs query (SECURITY permission; Settings, General, Logs). objectEvent and applicationLog need no entitlement; the other tables need an enterprise key plus the AUDIT_LOGS entitlement.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/event-logs/registry/event-log-registry.ts:47",
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.service.ts:176",
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.resolver.ts:52",
+        "packages/twenty-server/src/engine/core-modules/event-logs/ingest/event-log-ingestion.module.ts:34",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1357",
+        "packages/twenty-front/src/pages/settings/general/SettingsGeneral.tsx:105"
+      ],
+      "evidenceQuote": "Audit logs require ClickHouse to be configured. Please set the CLICKHOUSE_URL environment variable.",
+      "confidence": "high"
+    },
+    {
+      "id": "F19",
+      "subQuestion": "Q4c",
+      "claim": "Local DB (Apple): the UI-created company 'Local Setup Test Co' has createdBy and updatedBy MANUAL / 'Tim Apple' and one timelineActivity 'recordCreated' with a member id and empty properties. No enterprise token exists and CLICKHOUSE_URL is unset, so event logs are unavailable here.",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT c.name, c.\\\"createdBySource\\\", c.\\\"createdByName\\\", c.\\\"updatedBySource\\\", c.\\\"updatedByName\\\", (SELECT string_agg((ta.\\\"timelineActivityTypeSnapshot\\\"->>'name') || ':' || (ta.\\\"workspaceMemberId\\\" IS NOT NULL)::text || ':' || ta.properties::text, ', ') FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"timelineActivity\\\" ta WHERE ta.\\\"targetCompanyId\\\" = c.id) AS timeline FROM workspace_1wgvd1injqtife6y4rvfbu3h5.company c WHERE c.name ILIKE '%Local Setup Test%';\"",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT type, count(*) FROM core.\\\"appToken\\\" GROUP BY 1;\"",
+        "cd /Users/bussss/projects/twenty/packages/twenty-server && grep -n \"CLICKHOUSE\\|EVENT_LOG\\|EVENT_SINK\\|ANALYTICS\" .env | sed 's/=.*/=<redacted>/'  (variable names only; ANALYTICS_ENABLED and CLICKHOUSE_URL are commented out)"
+      ],
+      "evidenceQuote": "Local Setup Test Co|MANUAL|Tim Apple|MANUAL|Tim Apple|recordCreated:true:{} ; REFRESH_TOKEN|1",
+      "confidence": "high"
+    },
+    {
+      "id": "F20",
+      "subQuestion": "Q4c",
+      "claim": "Tool calls are recorded per channel: chat persists each call as an agentMessagePart (toolName, toolCallId, toolInput, toolOutput, state); a workflow agent step writes model, tokens, cost and truncated tool calls to workflowRun.stepLogs (a thread only if it pauses); MCP calls are not persisted.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/utils/mapUIMessagePartsToDBParts.ts:79",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts:174",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/utils/build-ai-agent-step-log.util.ts:24",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/utils/map-ai-steps-to-tool-call-logs.util.ts:10",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-tool-executor.service.ts:94"
+      ],
+      "evidenceQuote": "A conversation only exists to be answered in: an execution that never asks keeps its step log as its record",
+      "confidence": "high"
+    },
+    {
+      "id": "F21",
+      "subQuestion": "Q4c",
+      "claim": "Retention: a cron (every 3 hours, registered by cron:register:all) hard-deletes COMPLETED/FAILED runs older than 14 days and beyond 1000 per workflow; run conversations cascade with them. Step logs above 256 KB are dropped. Event-log retention defaults to 90 days.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/constants/runs-to-clean-threshold.ts:1",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/constants/number-of-workflow-runs-to-keep.ts:1",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/jobs/workflow-clean-workflow-runs.job.ts:76",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/cron/jobs/workflow-clean-workflow-runs.cron.job.ts:31",
+        "packages/twenty-server/src/engine/workspace-manager/twenty-standard-application/utils/field-metadata/compute-agent-chat-thread-standard-flat-field-metadata.util.ts:562",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run/workflow-run-step-log.workspace-service.ts:9",
+        "packages/twenty-server/src/engine/core-modules/workspace/workspace.entity.ts:159",
+        "packages/twenty-server/src/database/commands/cron-register-all.command.ts:42"
+      ],
+      "evidenceQuote": "export const RUNS_TO_CLEAN_THRESHOLD_DAYS = 14;",
+      "confidence": "high"
+    },
+    {
+      "id": "F22",
+      "subQuestion": "Q4c",
+      "claim": "Who answered a form or agent question is recorded only in the run's conversation: a USER agentMessage carrying senderUserWorkspaceId, plus the tool part output (status 'answered', values). workflowRun.state keeps only the values, and the written record carries no approver.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-tool-call-answer/services/tool-call-answer.service.ts:235",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat.service.ts:138",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat.service.ts:651",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workspace-services/workflow-runner.workspace-service.ts:168"
+      ],
+      "evidenceQuote": "senderUserWorkspaceId: userWorkspaceId ?? null,",
+      "confidence": "high"
+    }
+  ],
+  "docsVsSource": [
+    {
+      "topic": "'Manual approval' step",
+      "docsSay": "Core-concepts AI page: 'Agents work within your existing workflows, so you can combine AI with manual approvals, conditional logic, and external API calls.' No page documents an approval step.",
+      "sourceSays": "WorkflowActionType has 20 values and none is an approval. Only three actions can pause a run (return pendingEvent): FORM, DELAY and AI_AGENT with canAskQuestions.",
+      "refs": [
+        "https://docs.twenty.com/getting-started/core-concepts/ai",
+        "packages/twenty-docs/getting-started/core-concepts/ai.mdx:26",
+        "packages/twenty-shared/src/workflow/types/WorkflowActionType.ts:1",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/form/form.workflow-action.ts:48",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/delay/delay.workflow-action.ts:115",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts:206"
+      ]
+    },
+    {
+      "topic": "Run status while waiting on a form or delay",
+      "docsSay": "Run statuses are Running, Completed, Failed and 'Waiting: Workflow is paused (e.g., waiting for a Delay action or Form submission)'.",
+      "sourceSays": "WorkflowRunStatus is NOT_STARTED, RUNNING, COMPLETED, FAILED, ENQUEUED, STOPPING, STOPPED. A paused run stays RUNNING with the step in StepStatus.PENDING (same values in the local Postgres enum workflowRun_status_enum and on seeded runs).",
+      "refs": [
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-runs",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-runs.mdx:29",
+        "packages/twenty-server/src/modules/workflow/common/standard-objects/workflow-run.workspace-entity.ts:19",
+        "packages/twenty-shared/src/workflow/types/WorkflowRunStateStepInfos.ts:5"
+      ]
+    },
+    {
+      "topic": "Workflow run retention",
+      "docsSay": "'Runs are retained for historical reference', 'Very old runs may be archived automatically', 'Export run data if you need to keep records'.",
+      "sourceSays": "A cron job hard-deletes COMPLETED and FAILED runs older than 14 days and any beyond the newest 1000 per workflow (raw DELETE, no archive). Conversations attached to a run are removed by the ON DELETE CASCADE relation.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-runs",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-runs.mdx:72",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/jobs/workflow-clean-workflow-runs.job.ts:76",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/constants/runs-to-clean-threshold.ts:1",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/constants/number-of-workflow-runs-to-keep.ts:1"
+      ]
+    },
+    {
+      "topic": "Agent questions and pausing in workflow AI Agent steps",
+      "docsSay": "The AI Agent action is configured with an agent and a prompt; nothing says it can ask a person or pause. Only Delay and Form are described as pausing. The live page (fetched 2026-10-03) does not mention 'Can ask questions' either.",
+      "sourceSays": "AI_AGENT settings.input.canAskQuestions (UI toggle 'Can ask questions') gives the agent ask_questions, request_form and propose_email; calling one leaves the step PENDING until a person answers in the step's conversation.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-actions",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-actions.mdx:307",
+        "packages/twenty-shared/src/workflow/schemas/ai-agent-action-settings-schema.ts:9",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts:154",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/ai-agent-action/components/WorkflowAiAgentPromptTab.tsx:166"
+      ]
+    },
+    {
+      "topic": "Approval states for app-defined tools",
+      "docsSay": "Logic functions page: toolCall.status 'walks through input-available, the approval states when the tool needs one, and then output-available, output-denied or output-error'.",
+      "sourceSays": "ToolTriggerSettings only has inputSchema and frontComponentUniversalIdentifier, and nothing under twenty-server/src sets needsApproval, so an app tool cannot declare that it needs approval at this tag. The approval statuses exist only as SDK and step-log enum values.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/logic-functions",
+        "packages/twenty-docs/developers/extend/apps/logic/logic-functions.mdx:733",
+        "packages/twenty-shared/src/application/toolTriggerSettingsType.ts:7",
+        "packages/twenty-sdk/src/sdk/front-component/types/FrontComponentToolCallStatus.ts:3",
+        "packages/twenty-shared/src/workflow/schemas/workflow-run-step-log-schema.ts:16"
+      ]
+    },
+    {
+      "topic": "Audit logs gating",
+      "docsSay": "Pricing page lists 'Audit logs: Check what each workspace member has been doing' as a Premium feature of the Organization plans (cloud or self-hosted).",
+      "sourceSays": "Gating is per ClickHouse table: objectEvent and applicationLog have requiresEntitlement null ('free on every plan'); workspaceEvent, pageview and usageEvent need a valid enterprise key plus AUDIT_LOGS. Everything needs CLICKHOUSE_URL, which the pricing page does not mention.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/billing/capabilities/pricing-plans",
+        "packages/twenty-docs/user-guide/billing/capabilities/pricing-plans.mdx:50",
+        "packages/twenty-server/src/engine/core-modules/event-logs/registry/event-log-registry.ts:47",
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.service.ts:176"
+      ]
+    },
+    {
+      "topic": "Form field types and defaults",
+      "docsSay": "'a type among text, number, date, a given record, a select field' with 'a default value under Placeholder (optional)'.",
+      "sourceSays": "The schema allows TEXT, NUMBER, DATE, SELECT, MULTI_SELECT and RECORD. SELECT and MULTI_SELECT are only offered as 'Existing Field' (settings.selectedFieldId). placeholder is display text; a default lives in a separate value property.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-actions",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-actions.mdx:229",
+        "packages/twenty-shared/src/workflow/schemas/form-action-settings-schema.ts:9",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/form-action/components/WorkflowFormFieldSettingsSelect.tsx:35"
+      ]
+    },
+    {
+      "topic": "Action catalogue",
+      "docsSay": "The Workflow Actions page documents 17 actions (Create, Update, Delete, Search, Upsert and Pick Record, Iterator, Filter, Delay, Send Email, Draft Email, Create Calendar Event, Form, Code, HTTP Request, AI Agent, Classify).",
+      "sourceSays": "The enum has 20 values. The extra ones are LOGIC_FUNCTION (an app logic function exposed as an action, mentioned under Code), IF_ELSE (documented on the branches page) and EMPTY (internal placeholder).",
+      "refs": [
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-actions",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-actions.mdx:17",
+        "packages/twenty-shared/src/workflow/types/WorkflowActionType.ts:1"
+      ]
+    }
+  ],
+  "unclear": [
+    {
+      "topic": "Cron registration and worker state on this instance",
+      "why": "Run cleanup (14 days / 1000 runs), event-log cleanup and workflow cron triggers only run after `cron:register:all` (the Docker entrypoint does it; LOCAL-SETUP.md does not mention it). Redis inspection was outside the allowed read-only checks, so I could not see whether crons are registered. The worker ran at setup time (a timeline row exists for a UI-created company) but its current state was not checked; the workflow test needs it."
+    },
+    {
+      "topic": "updatedBy stamping for agent and workflow updates in practice",
+      "why": "The MANUAL-on-update conclusion comes from reading ActorFromAuthContextService and UpdateRecordService only. Seeded rows with updatedBySource WORKFLOW/API are seed data, not real executions. For automated (non-manual) runs the code suggests updatedBy would be APPLICATION (standard app) while createdBy is WORKFLOW; neither was observed live."
+    },
+    {
+      "topic": "How people discover pending forms and agent questions",
+      "why": "Source shows only two entry points: the side panel right after a manual trigger, and the run view (Form node, or AI step, Logs tab, 'Open conversation'). Run conversations are filtered out of the chat list (packages/twenty-front/src/modules/ai/utils/buildAgentChatThreadListFilter.ts:17) and no notification or inbox code was found; docs promise a notification center in 2026. Not exercised in the UI."
+    },
+    {
+      "topic": "Composed approval flow end to end",
+      "why": "AI_AGENT (structured output) -> FORM -> FILTER/IF_ELSE -> CREATE/UPDATE_RECORD was assembled from source reading; nothing was executed (no LLM key, read-only phase). Open points: how an approver sees the proposal (form labels are static, presumably via the previous node's Output tab), and FILTER behaviour on free-text form values."
+    },
+    {
+      "topic": "Approval states for app-defined tools",
+      "why": "Docs mention 'the approval states when the tool needs one' for tool widgets, but ToolTriggerSettings has no approval option and no server code sets needsApproval. I could not determine whether this is planned, removed, or reachable another way."
+    },
+    {
+      "topic": "Whether an app can read agent messages and tool calls for its own audit export or evals",
+      "why": "Local metadata (core.objectMetadata) shows agentTurn, agentMessage and agentMessagePart with readability SYSTEM and writability SYSTEM (agentChatThread is INHERITED, workflowRun PRIVATE). The read paths I found are the metadata query agentTurns(agentId) (AI_SETTINGS permission) and the chat UI. Whether an app role or API key can read these objects through the object API was not established."
+    },
+    {
+      "topic": "Whether an app front component can answer pending calls for the viewing user",
+      "why": "Guards on answerToolCall allow application tokens that carry a user (application: withUser true), and for run conversations only the WORKFLOWS permission and run readability are checked. That suggests an app-built approval inbox calling answerToolCall is possible, but it is undocumented and untested."
+    },
+    {
+      "topic": "Timeline display of agent-made changes",
+      "why": "The timeline row stores only workspaceMemberId, so an agent acting for a user would appear as that user; the record's createdBy chip is the only place the AGENT source would show. Not checked in the browser."
+    }
+  ],
+  "unstable": [
+    {
+      "item": "answerToolCall and run-owned conversations for form steps are new in 2.44; submitFormStep and answerAgentChatQuestion are deprecated shims",
+      "evidence": "'Kept so clients built before answerToolCall keep working for a release.' Local introspection marks submitFormStep deprecated. 2.44 upgrade commands add-workflow-run-to-chat-threads and record-pending-form-conversations.",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-tool-call-answer/resolvers/tool-call-answer.resolver.ts:97",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-tool-call-answer/resolvers/answer-agent-chat-question.resolver.ts:37",
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-44/2-44-workspace-command-1790607161319-add-workflow-run-to-chat-threads.command.ts",
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-44/2-44-workspace-command-1790772993322-record-pending-form-conversations.command.ts"
+      ]
+    },
+    {
+      "item": "Temporary 2.44 cross-upgrade fence around run conversations",
+      "evidence": "'Fence for the 2.44 cross-upgrade window ... Remove once 2.44 leaves the window.' and 'A workspace 2.44 has not reached yet cannot record the conversation'.",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-history/utils/has-workflow-run-thread-fields.util.ts:7",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/form/form.workflow-action.ts:38"
+      ]
+    },
+    {
+      "item": "AI_AGENT canAskQuestions (agent-initiated pause in workflows) is off by default and absent from the docs",
+      "evidence": "'Off by default: an agent that can ask pauses its run until someone answers, which existing workflows were not built to expect.'",
+      "refs": [
+        "packages/twenty-shared/src/workflow/schemas/ai-agent-action-settings-schema.ts:9",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-actions.mdx:307"
+      ]
+    },
+    {
+      "item": "Workflow definitions are mid-migration to core-schema entities; legacy and core GraphQL mutations coexist behind IS_WORKFLOW_CORE_INDEX_PAGE_ENABLED",
+      "evidence": "Front switches between runWorkflowVersion and runCoreWorkflowVersion on the flag (no row for it in the seeded workspaces, so the legacy path is used locally). Runs need a core mapping: 'Workspace workflow version has no core execution mapping'. core.workflow holds 10 mirrored rows locally.",
+      "refs": [
+        "packages/twenty-front/src/modules/workflow/hooks/useIsWorkflowCoreEnabled.ts:4",
+        "packages/twenty-front/src/modules/workflow/hooks/useRunWorkflowVersion.tsx:164",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workspace-services/workflow-runner.workspace-service.ts:63",
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:10"
+      ]
+    },
+    {
+      "item": "Agent history storage recently moved from core.* tables to workspace-schema objects",
+      "evidence": "'Shipped upgrade commands keep this import while live chat uses workspace storage.' and 'AI history is unavailable until this workspace finishes upgrading.' Locally core.agentChatThread and core.agentMessage are empty and the workspace tables hold the data.",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-history/services/agent-history-storage.service.ts:1",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-history/services/agent-history-workspace-storage.service.ts:87",
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-44/2-44-workspace-command-1790751626421-move-agent-chat-threads-to-record-model.command.ts"
+      ]
+    },
+    {
+      "item": "Stuck RUNNING runs are only monitored, and runs with PENDING steps are skipped",
+      "evidence": "'Monitoring mode: stuck RUNNING runs are only flagged, never finalized.'",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run-queue/workspace-services/workflow-handle-staled-runs.workspace-service.ts:121"
+      ]
+    },
+    {
+      "item": "Forms outside manual triggers: no notification yet",
+      "evidence": "Docs warning: 'A notification center will be released in 2026 to properly support forms in automated workflows.'",
+      "refs": [
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-actions",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-actions.mdx:225"
+      ]
+    },
+    {
+      "item": "App-defined timeline activity types and createTimelineActivity() (the app-level way to write explicit audit events) are beta",
+      "evidence": "'Timeline activity types are in beta, the API can evolve while we learn from app developers' use cases.'",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/data/timeline-activity-types",
+        "packages/twenty-docs/developers/extend/apps/data/timeline-activity-types.mdx:10",
+        "packages/twenty-docs/developers/extend/apps/logic/logic-functions.mdx:893"
+      ]
+    },
+    {
+      "item": "Feature flags touching this area: IS_CONVERSATIONS_TAB_ENABLED (false locally), IS_LOGS_SETTINGS_SECTION_ENABLED (true locally), IS_EXECUTION_QUOTA_ENABLED (true locally), IS_RECORD_SHARING_ENABLED and IS_WORKFLOW_CORE_INDEX_PAGE_ENABLED (no row locally)",
+      "evidence": "The attach_conversation_to_record tool and the record Conversations tab are gated on IS_CONVERSATIONS_TAB_ENABLED; workflow node runs check quota only when IS_EXECUTION_QUOTA_ENABLED is on. Flag values read from core.featureFlag.",
+      "refs": [
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:10",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:309",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workspace-services/workflow-executor.workspace-service.ts:390",
+        "packages/twenty-server/src/engine/workspace-manager/dev-seeder/core/utils/seed-feature-flags.util.ts:6"
+      ]
+    },
+    {
+      "item": "Event logs are Enterprise-licensed code, need ClickHouse, and carry an open TODO",
+      "evidence": "File header '/* @license Enterprise */'; 'TODO: non-usage tables filter by userId ... migrate all to userWorkspaceId for consistency.'",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.service.ts:1",
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.service.ts:222"
+      ]
+    },
+    {
+      "item": "Webhook trigger authentication is not implemented",
+      "evidence": "Docs: 'Configure authentication (coming soon).' The schema already has authentication: 'API_KEY' | null, but the controller routes use PublicEndpointGuard and NoPermissionGuard.",
+      "refs": [
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-triggers.mdx:113",
+        "packages/twenty-shared/src/workflow/schemas/webhook-trigger-schema.ts:10",
+        "packages/twenty-server/src/engine/core-modules/workflow/controllers/workflow-trigger.controller.ts:51"
+      ]
+    },
+    {
+      "item": "Unused approval plumbing: step-log tool-call state 'awaiting-approval' and SDK statuses 'approval-requested' / 'approval-responded' exist but nothing on the server produces them",
+      "evidence": "state: z.enum(['started', 'success', 'error', 'awaiting-approval']) while mapAiStepsToToolCallLogs only sets started, success or error.",
+      "refs": [
+        "packages/twenty-shared/src/workflow/schemas/workflow-run-step-log-schema.ts:16",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/utils/map-ai-steps-to-tool-call-logs.util.ts:99",
+        "packages/twenty-sdk/src/sdk/front-component/types/FrontComponentToolCallStatus.ts:6"
+      ]
+    },
+    {
+      "item": "updatedBy parameter of the record update service is declared and passed but ignored",
+      "evidence": "UpdateRecordExecutionContext has 'updatedBy?: ActorMetadata' and the workflow update action passes it, but UpdateRecordService.execute never destructures it.",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/record-crud/types/update-record-execution-context.type.ts:6",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/record-crud/update-record.workflow-action.ts:117",
+        "packages/twenty-server/src/engine/core-modules/record-crud/services/update-record.service.ts:27"
+      ]
+    },
+    {
+      "item": "Automated (non-manual) runs execute as the Twenty standard application with its default role, else an admin-role fallback, else permission bypass",
+      "evidence": "'In the future we should probably assign the Admin role to the Standard Application'",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-executor/services/workflow-execution-context.service.ts:101"
+      ]
+    }
+  ],
+  "localTestPlan": [
+    {
+      "goal": "Read-only baseline: re-verify the paused-form state on seeded runs and the GraphQL surface without changing anything.",
+      "steps": [
+        "curl -s -m 20 -X POST http://localhost:3000/graphql -H 'Content-Type: application/json' -d '{\"query\":\"{ __type(name: \\\"Mutation\\\") { fields(includeDeprecated: true) { name isDeprecated deprecationReason } } }\"}'",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT r.name, r.status, s.value->>'status' AS step_status, s.value->>'threadId' AS thread_id, t.\\\"pendingQuestionMessageId\\\" IS NOT NULL AS thread_waiting FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"workflowRun\\\" r, jsonb_each(r.state->'stepInfos') s LEFT JOIN workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentChatThread\\\" t ON t.id::text = s.value->>'threadId' WHERE s.key <> 'trigger' ORDER BY r.name;\"",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT t.typname, string_agg(e.enumlabel, ',' ORDER BY e.enumsortorder) FROM pg_enum e JOIN pg_type t ON t.oid=e.enumtypid JOIN pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname='workspace_1wgvd1injqtife6y4rvfbu3h5' AND t.typname IN ('workflowRun_status_enum','company_createdBySource_enum') GROUP BY 1;\"",
+        "Optional UI look (no edits): in the Apple workspace open Workflows > 'Approve discount' > runs; run #3 shows the pending Form node, run #1 the answered one, run #2 the stopped one. 'Qualify inbound lead' and 'Draft renewal reminder' show AI Agent steps waiting on ask_questions / propose_email."
+      ],
+      "expected": "Mutation list contains answerToolCall, runWorkflowVersion, stopWorkflowRun, retryWorkflowRun, updateWorkflowRunStep and submitFormStep with isDeprecated true. SQL shows '#3 - Approve discount|RUNNING|PENDING|<threadId>|t', '#1 - Approve discount|COMPLETED|SUCCESS|<threadId>|f', '#2 - Approve discount|STOPPED|FAILED|<threadId>|f'. Run status enum has no WAITING; actor source enum has AGENT, API, WORKFLOW, APPLICATION and no MCP.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Q4d main case over GraphQL (no LLM, no browser): create and activate workflow 'PN approval test' (manual trigger -> Form -> Create Record), start a run, confirm it pauses, submit the form, confirm the write and the audit data.",
+      "steps": [
+        "Preconditions: backend, worker and frontend are running (the worker executes RunWorkflowJob). Keep any helper script in /Users/bussss/projects/twenty-playground (for example pn-approval-test.sh) and keep the token in a shell variable only.",
+        "Get a user access token (these resolvers refuse API keys). POST http://localhost:3000/metadata: mutation { getLoginTokenFromCredentials(email: \"tim@apple.dev\", password: \"<dev password from LOCAL-SETUP.md>\", origin: \"http://localhost:3002\") { loginToken { token } } } then mutation { getAuthTokensFromLoginToken(loginToken: \"<loginToken>\", origin: \"http://localhost:3002\") { tokens { accessOrWorkspaceAgnosticToken { token } } } }. Send 'Authorization: Bearer <token>' on every POST http://localhost:3000/graphql below.",
+        "Create the workflow through the object API: mutation { createWorkflow(data: {name: \"PN approval test\"}) { id } } -> WF. The workflow.createOne post-hook creates the draft version: query { workflowVersions(filter: {workflowId: {eq: \"WF\"}}) { edges { node { id status } } } } -> WV (DRAFT). Object API names follow Twenty's convention; confirm by introspection with the token if a call is rejected.",
+        "Set the trigger: mutation($input: UpdateWorkflowVersionTriggerInput!) { updateWorkflowVersionTrigger(input: $input) { trigger } } with input {workflowVersionId: WV, trigger: {name: \"Launch manually\", type: \"MANUAL\", settings: {outputSchema: {}, icon: \"IconHandMove\", availability: {type: \"GLOBAL\"}}, nextStepIds: []}}.",
+        "Add two steps with client-generated UUIDs FORM_ID and CREATE_ID: mutation($input: CreateWorkflowVersionStepInput!) { createWorkflowVersionStep(input: $input) { triggerDiff stepsDiff } } first with {workflowVersionId: WV, stepType: \"FORM\", parentStepId: \"trigger\", id: FORM_ID}, then with {workflowVersionId: WV, stepType: \"CREATE_RECORD\", parentStepId: FORM_ID, id: CREATE_ID}.",
+        "Configure the Form first (the mutation replaces the whole step, so send full JSON including nextStepIds): mutation($input: UpdateWorkflowVersionStepInput!) { updateWorkflowVersionStep(input: $input) { id type valid settings nextStepIds } } with input {workflowVersionId: WV, step: {id: FORM_ID, name: \"PN approval form\", type: \"FORM\", valid: true, nextStepIds: [CREATE_ID], settings: {input: [{id: <uuid>, name: \"companyName\", label: \"Company name\", type: \"TEXT\", placeholder: \"PN Approval Test Co\"}, {id: <uuid>, name: \"decision\", label: \"Decision\", type: \"TEXT\", placeholder: \"approve\"}], outputSchema: {}, errorHandlingOptions: {retryOnFailure: {value: 0}, continueOnFailure: {value: false}}}}}.",
+        "Configure the Create Record step with the same mutation: step {id: CREATE_ID, name: \"PN create company\", type: \"CREATE_RECORD\", valid: true, nextStepIds: [], settings: {input: {objectName: \"company\", objectRecord: {name: \"{{FORM_ID.companyName}}\"}}, outputSchema: {}, errorHandlingOptions: {retryOnFailure: {value: 0}, continueOnFailure: {value: false}}}}.",
+        "Check and activate: query { workflowVersionContent(workflowVersionId: \"WV\") { trigger steps } }, mutation { validateWorkflowVersion(workflowVersionId: \"WV\") }, mutation { activateWorkflowVersion(workflowVersionId: \"WV\") }.",
+        "Start a run: mutation($input: RunWorkflowVersionInput!) { runWorkflowVersion(input: $input) { workflowRunId } } with input {workflowVersionId: WV} -> RUN.",
+        "SQL A, confirm the pause (poll a few seconds; or query { workflowRun(filter: {id: {eq: \"RUN\"}}) { id name status state } }): docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT r.id, r.name, r.status, r.\\\"createdBySource\\\", r.\\\"createdByName\\\", jsonb_pretty(r.state->'stepInfos') FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"workflowRun\\\" r WHERE r.name LIKE '%PN approval test%' ORDER BY r.\\\"createdAt\\\" DESC;\"  Note THREAD = stepInfos[FORM_ID].threadId.",
+        "SQL B, confirm no PN company exists yet (and later that it does): docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT c.id, c.name, c.\\\"createdBySource\\\", c.\\\"createdByName\\\", c.\\\"createdByWorkspaceMemberId\\\", c.\\\"updatedBySource\\\", c.\\\"updatedByName\\\" FROM workspace_1wgvd1injqtife6y4rvfbu3h5.company c WHERE c.name LIKE 'PN %';\"",
+        "Negative check: mutation($input: AnswerToolCallInput!) { answerToolCall(input: $input) { streamId } } with input {threadId: THREAD, toolCallId: FORM_ID, response: {foo: 1}}; the step must stay PENDING.",
+        "Submit the form: same mutation with response {companyName: \"PN Approval Test Co\", decision: \"approve\"}. Then re-run SQL A and SQL B.",
+        "SQL C, timeline of the created record: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT ta.\\\"timelineActivityTypeSnapshot\\\"->>'name', ta.\\\"workspaceMemberId\\\", ta.properties, ta.\\\"happensAt\\\" FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"timelineActivity\\\" ta JOIN workspace_1wgvd1injqtife6y4rvfbu3h5.company c ON c.id=ta.\\\"targetCompanyId\\\" WHERE c.name LIKE 'PN %' ORDER BY ta.\\\"happensAt\\\";\"",
+        "SQL D, the run's conversation (who answered, what was answered): docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT r.name, t.id, t.\\\"pendingQuestionMessageId\\\" IS NOT NULL AS waiting, m.role, m.\\\"senderWorkspaceMemberId\\\", p.\\\"toolName\\\", p.\\\"toolCallId\\\", left(p.\\\"textContent\\\",80), p.\\\"toolOutput\\\" FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentChatThread\\\" t JOIN workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"workflowRun\\\" r ON r.id=t.\\\"workflowRunId\\\" JOIN workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentMessage\\\" m ON m.\\\"threadId\\\"=t.id JOIN workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentMessagePart\\\" p ON p.\\\"messageId\\\"=m.id WHERE r.name LIKE '%PN approval test%' ORDER BY r.name, m.\\\"processedAt\\\", p.\\\"orderIndex\\\";\"",
+        "Idempotence: send the submit mutation again.",
+        "Cleanup once the evidence is recorded (optional): mutation { deleteWorkflow(id: \"WF\") { id } } then mutation { destroyWorkflow(id: \"WF\") { id } } (cascades versions, runs and run conversations), and deleteCompany / destroyCompany for the PN company."
+      ],
+      "expected": "After start: run goes ENQUEUED then RUNNING; stepInfos.trigger SUCCESS; stepInfos[FORM_ID] = {status: PENDING, threadId}; CREATE_ID NOT_STARTED; a thread row with workflowRunId = RUN and a pending request_form part; no PN company. Negative check: error 'The form has no field named foo.' After submit: answerToolCall returns streamId null; run COMPLETED; stepInfos[FORM_ID].result holds the submitted values; stepInfos[CREATE_ID].result holds the new company; the company row exists with createdBy and updatedBy MANUAL / 'Tim Apple' (the run initiator, predicted from source; nothing marks it as workflow-made); one recordCreated timeline row with a member id and empty properties; the thread shows request_form output status 'answered' with the values and a user message with senderWorkspaceMemberId. Second submit: error 'This tool call is no longer waiting for an answer'. If the run stays ENQUEUED the worker is not running.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "UI fallback for the same case (use if the scripted login or the object API calls fail).",
+      "steps": [
+        "Open http://localhost:3002 and log in with the prefilled dev credentials (Apple workspace).",
+        "Sidebar > Workflows > New record; name it 'PN approval test'.",
+        "Trigger: 'Launch manually', availability Global.",
+        "Add action 'Form': add a Text field labelled 'Company name' (field name becomes companyName) and a Text field labelled 'Decision'.",
+        "Add action 'Create Record': object Company; set Name with the variable picker to Form > Company name.",
+        "Click Activate.",
+        "Press Cmd+K and run 'PN approval test'. The run opens in the side panel showing the form. Before submitting, run SQL A and SQL B from the GraphQL plan.",
+        "Fill 'PN Approval Test Co' / 'approve' and click Submit. Then run SQL A to D from the GraphQL plan, and open the run: each node has Output / Node / Input / Logs tabs.",
+        "Shortcut that builds nothing: Cmd+K > 'Quick Lead' (seeded, active: manual -> Form -> Create company -> Create person) and fill it with PN-prefixed values."
+      ],
+      "expected": "Same as the GraphQL plan: run RUNNING with the Form step PENDING until Submit, then COMPLETED with the company created. The company's 'Created by' chip shows Tim Apple and its Timeline shows a creation entry.",
+      "needsLlmKey": false,
+      "needsBrowser": true,
+      "mutatesData": true
+    },
+    {
+      "goal": "Reject path and integrity of a waiting run: confirm that stopping is the only way to refuse a form, and probe whether a waiting run's later steps can be rewritten.",
+      "steps": [
+        "Start a second run of 'PN approval test' (runWorkflowVersion or Cmd+K) and do not submit -> RUN2, THREAD2.",
+        "Optional probe: mutation($input: UpdateWorkflowRunStepInput!) { updateWorkflowRunStep(input: $input) { id settings } } with input {workflowRunId: RUN2, step: <the CREATE_RECORD step JSON with objectRecord.name changed to \"PN tampered Co\">}; then read the run's steps: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT jsonb_pretty(r.state->'flow'->'steps') FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"workflowRun\\\" r WHERE r.name LIKE '%PN approval test%' AND r.status = 'RUNNING';\"",
+        "Stop it: mutation { stopWorkflowRun(workflowRunId: \"RUN2\") { id status } }.",
+        "Re-run SQL A, SQL B and SQL D from the GraphQL plan.",
+        "Try answerToolCall on THREAD2, then mutation { retryWorkflowRun(workflowRunId: \"RUN2\") { id status } }."
+      ],
+      "expected": "stopWorkflowRun returns STOPPED; the form step becomes FAILED with error 'Workflow has been ended before this step was completed'; the thread's request_form output becomes status 'skipped' and it no longer waits; no company is created; answerToolCall fails as not pending; retryWorkflowRun returns STOPPED unchanged (retry only applies to FAILED runs). For the probe, source predicts the run's flow.steps entry is replaced (the mutation has no step-type or approver restriction); record whether that holds.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Optional LLM variants: agent-initiated pause in a workflow, the composed approval gate, and the audit trail of a chat-agent write.",
+      "steps": [
+        "Stop and ask the user for a provider key. Set it (for example ANTHROPIC_API_KEY or OPENAI_API_KEY) under Settings > Admin Panel > Configuration Variables, or in packages/twenty-server/.env followed by a server restart.",
+        "UI: create workflow 'PN agent approval test': Launch manually -> AI Agent. Prompt: 'First call ask_questions to ask whether to approve creating a company named PN Agent Co (options Approve, Reject). Then answer with the chosen option.' Turn on 'Can ask questions'. Permissions tab: grant read only on Companies. Activate and run from Cmd+K.",
+        "Check the pause with the read-only run query of the baseline plan; expect the AI step PENDING with a threadId and the thread waiting.",
+        "In the run view open the AI Agent node > Logs tab > 'Open conversation', answer the question card, and watch the run resume.",
+        "Inspect the step log: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT r.name, r.status, jsonb_pretty(r.\\\"stepLogs\\\") FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"workflowRun\\\" r WHERE r.name LIKE '%PN agent approval test%';\"",
+        "Composed gate: add an output field companyName to the agent step, then Form (Text 'Decision'), Filter (Decision is 'approve') and Create Record (Company name = agent output companyName). Run twice, answering 'approve' then 'reject'.",
+        "Chat audit: in Ask AI ask 'Create a company named PN Chat Co, then rename it to PN Chat Co 2'. Then run SQL B from the GraphQL plan and: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT t.title, m.role, p.\\\"toolName\\\", p.state, left(p.\\\"toolInput\\\"::text,200), left(p.\\\"toolOutput\\\"::text,200) FROM workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentChatThread\\\" t JOIN workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentMessage\\\" m ON m.\\\"threadId\\\"=t.id JOIN workspace_1wgvd1injqtife6y4rvfbu3h5.\\\"agentMessagePart\\\" p ON p.\\\"messageId\\\"=m.id WHERE t.\\\"workflowRunId\\\" IS NULL AND p.\\\"toolName\\\" IS NOT NULL ORDER BY m.\\\"createdAt\\\" DESC LIMIT 20;\""
+      ],
+      "expected": "Workflow agent: run RUNNING / step PENDING until answered, then COMPLETED; stepLogs[stepId].details has type AI_AGENT, modelId, usage, cost and toolCalls; the thread holds the user prompt, the ask_questions call and a user answer message. Composed gate: the company is created only on 'approve', and with a read-only role the agent has no create tool. Chat: the PN Chat company has createdBySource AGENT with the user's name; source predicts updatedBySource MANUAL after the rename (record the actual value); tool calls appear as agentMessagePart rows (toolName execute_tool or the CRUD tool name, with toolInput and toolOutput).",
+      "needsLlmKey": true,
+      "needsBrowser": true,
+      "mutatesData": true
+    }
+  ]
+}

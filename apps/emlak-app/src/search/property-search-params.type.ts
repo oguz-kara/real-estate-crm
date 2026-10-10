@@ -1,0 +1,21 @@
+export type PropertySearchParams = {
+  category?: string;
+  subTypes?: string[];
+  listingType?: string;
+  status?: string;
+  districts?: string[];
+  neighborhoodContains?: string;
+  priceMin?: number;
+  priceMax?: number;
+  sqmNetMin?: number;
+  sqmNetMax?: number;
+  rooms?: string[];
+  buildingAges?: string[];
+  heatings?: string[];
+  furnished?: boolean;
+  features?: string[];
+  featuresMode?: 'any' | 'all';
+  sortBy?: 'price' | 'createdAt' | 'sqmNet';
+  sortDirection?: 'asc' | 'desc';
+  limit?: number;
+};

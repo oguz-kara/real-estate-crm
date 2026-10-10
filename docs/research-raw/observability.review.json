@@ -1,0 +1,252 @@
+{
+  "area": "observability",
+  "verdicts": [
+    {
+      "id": "F1",
+      "verdict": "imprecise",
+      "correctedClaim": "Each billed AI path emits one AI token usageEvent (AI_CHAT_TOKEN or AI_WORKFLOW_TOKEN, quantity = input+output tokens, resourceContext = model id). Native web searches add a separate WEB_SEARCH event (unit INVOCATION), and tool-call repair bills its own extra event.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-billing/services/ai-billing.service.ts:188",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-billing/services/ai-billing.service.ts:224",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/utils/repair-tool-call.util.ts:116",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-title-generation.service.ts:75"
+      ],
+      "reason": "The field mapping in emitAiTokenUsageEvent matches. But 'one usage event' leaves out billNativeWebSearchUsage, which records a separate WEB_SEARCH/INVOCATION row, and repair-tool-call.util calls calculateAndBillUsage again. Chat events pass agentId null. The title call is billed as AI_CHAT_TOKEN."
+    },
+    {
+      "id": "F2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "usage-recorder.service.ts:69 returns early when eventLogEmitterService.isEnabled() is false, and that is just sinks.length > 0. EVENT_SINKS is env-only with default ['clickhouse'] (config-variables.ts ~1357). getAvailableSinkNames drops clickhouse when CLICKHOUSE_URL is unset. ConsoleEventSink logs JSON rows, except applicationLog rows, which it logs as plain messages."
+    },
+    {
+      "id": "F3",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "The workspace entities and the live columns (information_schema on the Apple schema) match. agentTurn has only id/agentId/threadId/timestamps, and agentMessage has no model, cost or latency columns. The system message is built in chat-execution.service.ts:464 and passed to streamText. No code persists a system-role message."
+    },
+    {
+      "id": "F4",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "build-ai-agent-step-log.util.ts builds details with modelId, usage (input/output/reasoning/cacheRead/cacheCreation/total), cost, nativeWebSearchCallCount, toolCalls and durationMs. MAX_STEP_LOG_BYTES = 256_000 makes oversize logs get dropped, and a jsonb_set on workflowRun.stepLogs writes them. Tool input and output are also truncated (32 KB and 64 KB)."
+    },
+    {
+      "id": "F5",
+      "verdict": "imprecise",
+      "correctedClaim": "runAgent persists no turn or thread and returns only {result, error, success}. Only execution failures are masked as 'Agent execution failed.'. Validation errors (agent not found, another app's agent, prompt/messages XOR, runAs) are thrown, and credit exhaustion returns 'Agent stopped: no more available credits.'",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:62",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:139",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:152"
+      ],
+      "reason": "The checks before the try block throw AiException or NotFoundException, and INVALID_AGENT_INPUT is rethrown. The credits path has its own message. The generate-text return shape {text, usage:{inputTokens, outputTokens}} is as stated."
+    },
+    {
+      "id": "F6",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "agentTurns filters on where:{agentId}. Chat addMessage and promoteQueuedMessage insert turns with agentId null. runEvaluationInput sets agentId. The workflow step records a conversation only when resumed or paused (recordConversation with agent?.id). Locally, 0 of 26 Apple turns have an agentId."
+    },
+    {
+      "id": "F7",
+      "verdict": "imprecise",
+      "correctedClaim": "Usage views read ClickHouse usageEvent. Settings > AI > Usage and Admin Panel > AI usage are both gated in the UI by billing or a valid enterprise token, and Billing > Usage nav is hidden without billing. Without ClickHouse, getUsageAnalytics (WORKSPACE permission only) returns empty arrays.",
+      "correctedRefs": [
+        "packages/twenty-front/src/modules/settings/admin-panel/ai/components/SettingsAdminAI.tsx:67",
+        "packages/twenty-server/src/database/clickhouse/clickhouse.service.ts:182"
+      ],
+      "reason": "SettingsAdminAI skips the getAdminAiUsageByWorkspace query and hides the table unless hasEnterpriseAccess (billing or enterprise token). The analytics breakdowns use clickHouseService.select, which returns [] when there is no client, so they do not throw."
+    },
+    {
+      "id": "F8",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "useIsLogConsoleAllowed needs the flag, Advanced mode and SECURITY (and not mobile). The eventLogs resolver guards on SECURITY. validateAccess throws the quoted ClickHouse message, then checks the entitlement. USAGE_EVENT requires AUDIT_LOGS, as do WORKSPACE_EVENT and PAGEVIEW, which back the Security, Webhooks and Page views sources."
+    },
+    {
+      "id": "F9",
+      "verdict": "imprecise",
+      "correctedClaim": "Postgres-only views need no ClickHouse or enterprise key: agent Evals/Logs and turn detail (AI_SETTINGS), the workflow run step Logs tab, and the chat context-usage popover. Admin Panel chats require a user with server-level canImpersonate and a workspace with allowImpersonation.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/guards/server-level-impersonate.guard.ts:11",
+        "packages/twenty-server/src/engine/core-modules/impersonation/utils/user-can-server-impersonate.util.ts:5"
+      ],
+      "reason": "The chat admin queries are guarded by ServerLevelImpersonateGuard (user.canImpersonate === true), not by the general AdminPanelGuard. The rest checks out."
+    },
+    {
+      "id": "F10",
+      "verdict": "imprecise",
+      "correctedClaim": "No OTel tracer is set up; instrument.ts only builds a MeterProvider (METER_DRIVER console/opentelemetry/prometheus:9464, default []). Token, latency, TTFT and turn-outcome metrics exist only for AI chat. Workflow-agent and MCP emit only tool-execution metrics.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/core-modules/metrics/types/metrics-keys.type.ts:31",
+        "packages/twenty-server/src/engine/core-modules/metrics/types/metrics-keys.type.ts:43"
+      ],
+      "reason": "The only MetricsKeys.Ai* users are ai-chat services and jobs. Workflow-agent and MCP keys cover tool success, failure, duration and output tokens only. No TracerProvider or NodeSDK exists in the source."
+    },
+    {
+      "id": "F11",
+      "verdict": "imprecise",
+      "correctedClaim": "AI SDK telemetry (recordInputs/recordOutputs, functionId, workspace/user/agent/thread/turn ids) is set on chat, agent executor, title, generate-text, grader and tool-repair calls, but not on the Classify evaluate() call. Its only consumer is Sentry vercelAIIntegration, initialised only when EXCEPTION_HANDLER_DRIVER=SENTRY.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-evaluation/services/native-evaluation.runner.ts:48"
+      ],
+      "reason": "Callers of buildAiTelemetry exclude native-evaluation.runner, so 'every model call' is overstated. The Sentry init, vercelAIIntegration and the ai.* sampler at 1 match instrument.ts:61-103."
+    },
+    {
+      "id": "F12",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1282"
+      ],
+      "reason": "calculateCost logs the quoted Cost line, and chat-execution logs [AI_CHAT_TOKENS] step #n. The default LOG_LEVELS includes 'log'. LoggerDriverType has only CONSOLE. The cited line 1237 is LOG_LEVELS; LOGGER_DRIVER is at 1282."
+    },
+    {
+      "id": "F13",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "APPLICATION_LOG_DRIVER appears only in .env.example:55 and Dockerfile:316. handleExecutionResult dispatches applicationLog envelopes only when sinks are enabled. publishLogicFunctionLogsToCli publishes on LOGIC_FUNCTION_LOGS_CHANNEL regardless of sinks."
+    },
+    {
+      "id": "F14",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "computeCostBreakdown uses input, cached, cacheCreation and long-context rates, with reasoning at the output rate. DOLLAR_TO_CREDIT_MULTIPLIER is 1_000_000, NATIVE_WEB_SEARCH_COST_PER_CALL_DOLLARS is 0.01, and there is no markup constant. The user docs say 'not a marked-up internal rate'."
+    },
+    {
+      "id": "F15",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "getSubscriptionInactiveReason returns null when IS_BILLING_ENABLED is false. isCreditAllowanceEnabled returns IS_BILLING_ENABLED. The AI quota defaults are []. POST /app/billing/charge throws NotFoundException when billing is disabled."
+    },
+    {
+      "id": "F16",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Traced from code. Cold counters go to fetchConsumptionRows, then getConsumptionRowsForAllScopes, then selectOrThrow, which throws ClickHouseException without a client. admitOnFailure rethrows only WorkspaceCacheException/UsageLimitException, otherwise it logs the quoted message and admits. Nothing is mset, so counters stay cold. Not tested."
+    },
+    {
+      "id": "F17",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "credits.mdx lines 8, 68, 117 and 147 contain the Not-live-yet warning, the 1 USD = 1,000,000 micro-credit unit and the 'does not see the balance or the plan' text."
+    },
+    {
+      "id": "F18",
+      "verdict": "imprecise",
+      "correctedClaim": "Grading is triggered by evaluateAgentTurn(turnId) or by runEvaluationInput, whose queued job runs the agent and then automatically enqueues EvaluateAgentTurnJob. A fixed rubric on the 'fast' default model stores score 0-100 plus comment in agentTurnEvaluation, with a heuristic fallback when no model is available or the LLM call or parse fails. The grader call is not billed.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/jobs/run-evaluation-input.job.ts:84",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/services/agent-turn-grader.service.ts:111"
+      ],
+      "reason": "RunEvaluationInputJob adds EvaluateAgentTurnJob after it stores the assistant message, so eval-input runs are graded automatically. Chat turns are never auto-graded. The catch block also falls back to the heuristic."
+    },
+    {
+      "id": "F19",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "ai-evaluation.service.ts throws the quoted Jev error and bills AI_WORKFLOW_TOKEN. native-evaluation.runner uses experimental_evaluate. Its only consumer is classify.workflow-action, which returns {answers, modelId}. TYPESAFE_AI_API_KEY is at config-variables.ts:2032, and jev-latest supports choice/score/boolean."
+    },
+    {
+      "id": "F20",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "AgentHistoryRepository uses shouldSkipEventEmission: true. AgentChatThreadRecordEventService emits thread batch events. Locally, agentTurn/agentMessage/agentMessagePart/agentTurnEvaluation are SYSTEM/SYSTEM and agentChatThread is INHERITED/OPEN. SYSTEM readability resolves to 'deny' in the workspace repository gate. The guards are AI_SETTINGS (agentTurns/evaluateAgentTurn) and AI (runAgent)."
+    },
+    {
+      "id": "F21",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "AgentManifest has no evaluationInputs. The manifest mapper sets evaluationInputs: [] and isCustom: false. The Evals tab content gets disabled={isEvalsDisabled}, which is isReadonlyMode in dev and also covers non-custom agents in production. core.agent.evaluationInputs is _text."
+    },
+    {
+      "id": "F22",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran the queries. The Apple and YC schemas hold agentChatThread 15/6 (0 with tokens), agentTurnEvaluation 0, and workflowRun 5/5 with no stepLogs. The core legacy agent history tables are 0 and there is no usageEvent or applicationLog table. /client-config shows isClickHouseConfigured False, billing False, no Sentry DSN, aiModels 0. No ClickHouse container is running."
+    }
+  ],
+  "missed": [
+    {
+      "subQuestion": "Q6e",
+      "claim": "runEvaluationInput is graded automatically: after the queued agent run stores the assistant message, the job enqueues EvaluateAgentTurnJob. If the run throws (for example no LLM key), no grade is produced.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/jobs/run-evaluation-input.job.ts:84"
+      ],
+      "evidenceQuote": "}>(EvaluateAgentTurnJob.name, {"
+    },
+    {
+      "subQuestion": "Q6d",
+      "claim": "A registered model with no catalog cost config (a custom provider model) gets a default config priced at 0 USD per million tokens, so its calls are recorded and limited at 0 credits.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/services/ai-model-registry.service.ts:715",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/services/ai-model-registry.service.ts:728"
+      ],
+      "evidenceQuote": "inputCostPerMillionTokens: 0,"
+    },
+    {
+      "subQuestion": "Q6a",
+      "claim": "Tool-call entries in workflow AI-agent step logs are truncated: tool input to 32,000 bytes, tool output to 64,000 bytes, at most 200 tool calls per step, and error messages to 2,000 characters.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/utils/map-ai-steps-to-tool-call-logs.util.ts:10"
+      ],
+      "evidenceQuote": "const DEFAULT_MAX_TOOL_INPUT_BYTES = 32_000;"
+    },
+    {
+      "subQuestion": "Q6c",
+      "claim": "When quota enforcement fails open (for example without ClickHouse), the server increments the OTel counters usage-limit-quota/admitted-on-failure and ...-credits-micro. With METER_DRIVER set, this degraded enforcement can be observed.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/usage-limit/services/usage-limit-quota.service.ts:549",
+        "packages/twenty-server/src/engine/core-modules/metrics/types/metrics-keys.type.ts:64"
+      ],
+      "evidenceQuote": "UsageLimitQuotaAdmittedOnFailure = 'usage-limit-quota/admitted-on-failure',"
+    },
+    {
+      "subQuestion": "Q6c",
+      "claim": "runAgent and /rest/ai/generate-text wrap the model call in withDedicatedAiTrace, which calls Sentry.startNewTrace. Under Sentry, each call gets its own trace instead of joining the HTTP request trace.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/utils/with-dedicated-ai-trace.util.ts:8",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:123",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-generate-text/controllers/ai-generate-text.controller.ts:94"
+      ],
+      "evidenceQuote": "): TResult => Sentry.startNewTrace(callback);"
+    },
+    {
+      "subQuestion": "Q6b",
+      "claim": "The ai-workspace-stats module (findWorkspaceAiStats, AI_SETTINGS) returns only conversation, skill and tool counts, with no tokens or cost. The aiChatUsage query (AI permission) reports allowance or limit consumption from quota counters, not per-call data.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-workspace-stats/services/ai-workspace-stats.service.ts:25",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/ai-chat-usage.service.ts"
+      ],
+      "evidenceQuote": "const [conversationsCount, flatMaps, toolIndex] = await Promise.all(["
+    }
+  ],
+  "testPlanIssues": [
+    "Console-sinks step: it requires stopping and restarting the shared dev stack (EVENT_SINKS=console METER_DRIVER=console npx nx start). Other agents are using this instance, so only run it with explicit coordination. Otherwise treat it as source-predicted only.",
+    "Turn-evaluation step: with an LLM key, RunEvaluationInputJob already enqueues EvaluateAgentTurnJob. A manual evaluateAgentTurn then inserts a second agentTurnEvaluation row, so the expected 0 -> 1 count only holds without a key. With a key, skip the manual call or expect 2 rows.",
+    "Turn-evaluation step, no-key case: the agent run throws in the worker before the assistant message is stored, so no automatic grade appears. Only the manual evaluateAgentTurn yields the heuristic 100 'Completed', because the stored user text counts as a response.",
+    "App-credits step: name the function explicitly when executing, i.e. 'yarn twenty dev:function:exec -n pn-credits-probe' (cli.mdx documents -n / -u). chargeCredits with operationType (not operation) is the documented form only for apps that declare no billable operations.",
+    "ClickHouse-gated reads step: the expected UI text is right for the AI Usage tab ('Organization feature' card). Also note that Admin Panel > AI usage is hidden behind the same billing/enterprise check, so it shows nothing rather than a ClickHouse message."
+  ]
+}

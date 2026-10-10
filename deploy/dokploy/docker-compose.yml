@@ -1,0 +1,99 @@
+# Production stack for the Emlak CRM on Dokploy.
+# Based on packages/twenty-docker/docker-compose.yml (official Twenty v2.44.0).
+# The Twenty core is unmodified, so the official image is used as-is; the
+# Emlak app (apps/emlak-app) is installed afterwards with `yarn twenty apply`.
+# Secrets come from Dokploy's Environment tab, never from git.
+name: emlak-crm
+
+x-twenty-env: &twenty-env
+  PG_DATABASE_URL: postgres://${PG_DATABASE_USER:-postgres}:${PG_DATABASE_PASSWORD:?PG_DATABASE_PASSWORD is required}@db:5432/${PG_DATABASE_NAME:-default}
+  SERVER_URL: ${SERVER_URL:?SERVER_URL is required}
+  REDIS_URL: redis://redis:6379
+  STORAGE_TYPE: ${STORAGE_TYPE:-local}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?ENCRYPTION_KEY is required}
+  FALLBACK_ENCRYPTION_KEY: ${FALLBACK_ENCRYPTION_KEY:-}
+  # Emlak logic functions (sweepers, matching, request intake) only run when
+  # this is LOCAL; Twenty defaults to DISABLED outside development.
+  LOGIC_FUNCTION_TYPE: ${LOGIC_FUNCTION_TYPE:-LOCAL}
+  # DeepSeek provider for the Emlak agents (JSON, see .env.example).
+  AI_PROVIDERS: ${AI_PROVIDERS:?AI_PROVIDERS is required, see .env.example}
+  TELEMETRY_ENABLED: "false"
+  MARKETPLACE_CATALOG_SYNC_CRON_ENABLED: "false"
+  # E-mail stays on Twenty's default logger driver. To send invitations and
+  # password resets, add EMAIL_DRIVER: SMTP and the EMAIL_SMTP_* variables.
+
+services:
+  server:
+    image: twentycrm/twenty:${TAG:-v2.44.0}
+    volumes:
+      - server-local-data:/app/packages/twenty-server/.local-storage
+    # No host port: Dokploy's Traefik routes the domain to port 3000.
+    expose:
+      - "3000"
+    environment:
+      <<: *twenty-env
+      NODE_PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: curl --fail http://localhost:3000/healthz
+      # the first boot creates the whole database schema; on a small VPS that
+      # takes minutes, and failures during start_period do not count
+      start_period: 600s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  worker:
+    image: twentycrm/twenty:${TAG:-v2.44.0}
+    volumes:
+      - server-local-data:/app/packages/twenty-server/.local-storage
+    command: ["yarn", "worker:prod"]
+    environment:
+      <<: *twenty-env
+      # migrations and cron registration already run in the server entrypoint
+      DISABLE_DB_MIGRATIONS: "true"
+      DISABLE_CRON_JOBS_REGISTRATION: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    restart: always
+
+  db:
+    image: postgres:16
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${PG_DATABASE_NAME:-default}
+      POSTGRES_PASSWORD: ${PG_DATABASE_PASSWORD}
+      POSTGRES_USER: ${PG_DATABASE_USER:-postgres}
+    healthcheck:
+      test: pg_isready -U ${PG_DATABASE_USER:-postgres} -h localhost -d postgres
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+  redis:
+    image: redis:7
+    # Cron schedules live in Redis; noeviction keeps them from being dropped.
+    command: ["--maxmemory-policy", "noeviction", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: always
+
+volumes:
+  db-data:
+  server-local-data:
+  redis-data:

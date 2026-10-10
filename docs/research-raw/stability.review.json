@@ -1,0 +1,243 @@
+{
+  "area": "stability",
+  "verdicts": [
+    {
+      "id": "Q7a-1",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "FeatureFlagKey.ts has 19 values. PUBLIC_FEATURE_FLAGS contains only IS_JUNCTION_RELATIONS_ENABLED; its cloud-only spread is empty. The cited usage sites gate the sub-features named (prebuilt execution mode, execution quota, conversation attach tool, validation rules, log console). No flag switches AI, MCP or apps on or off as a whole."
+    },
+    {
+      "id": "Q7a-2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "I re-ran the SELECT: 10 rows per workspace with the values stated, and none for RECORD_SHARING, PREBUILT_MODE, WORKFLOW_CORE_INDEX_PAGE or WEBHOOK_RATE_LIMIT. isFeatureEnabled returns !!map[key], so a missing row reads as false. This matches DEFAULT_SEEDED_FEATURE_FLAGS in seed-feature-flags.util.ts."
+    },
+    {
+      "id": "Q7a-3",
+      "verdict": "imprecise",
+      "correctedClaim": "Lab updateLabPublicFeatureFlag accepts public flags only (WORKSPACE permission; API keys allowed). Admin-panel updateWorkspaceFeatureFlag needs a user session, SECURITY permission and canAccessFullAdminPanel. IS_FEATURE_FLAG_MANAGEMENT_ENABLED/dev/billing only control whether the UI tab shows; no CLI command exists.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/core-modules/admin-panel/admin-panel.resolver.ts:116",
+        "packages/twenty-server/src/engine/core-modules/lab/lab.resolver.ts:36",
+        "packages/twenty-front/src/pages/settings/admin-panel/SettingsAdminWorkspaceDetail.tsx:203"
+      ],
+      "reason": "IS_FEATURE_FLAG_MANAGEMENT_ENABLED is read only in client-config.service.ts (canManageFeatureFlags), and that value is consumed only by the front end. The server mutation never checks it. The class-level guards add a SECURITY settings-permission check and reject API keys. The Lab resolver accepts apiKey, oauthClient and application principals."
+    },
+    {
+      "id": "Q7b-1",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "I opened every cited line and each label is verbatim: skills-and-agents.mdx:7, front-components.mdx:10 and :796, messaging-channels.mdx:12, timeline-activity-types.mdx:10, sync-and-recovery.mdx:101, credits.mdx:8. user-guide/ai has only an API-key safety Warning (mcp.mdx:67), no maturity label. Workflow-page labels exist that the finding does not list (see missed)."
+    },
+    {
+      "id": "Q7c-1",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "LICENSE lines 3-4 and the Commercial License near line 732 contain the production-use, Enterprise subscription for hosts and seats, and development/testing exemption wording as quoted."
+    },
+    {
+      "id": "Q7c-2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "LICENSE item 2 lists twenty-sdk, twenty-client-sdk, create-twenty-app, twenty-shared, twenty-ui and packages/twenty-apps as MIT. The package.json files say MIT (twenty-shared has no version field). The Twenty Application Exception definitions, permission, bundling and limits (modified Twenty stays AGPL) match."
+    },
+    {
+      "id": "Q7c-3",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "I re-ran the grep: 458 total = 398 server, 55 front, 5 shared. Per-directory counts are consistent with the stated buckets: billing 169 + billing-webhook 23, record-share 44, usage 26, enterprise 20, event-logs 15, RLS predicate dirs 19+6 plus ORM/migration utils. Shared files are the RowLevelPermissionPredicate* types."
+    },
+    {
+      "id": "Q7c-4",
+      "verdict": "imprecise",
+      "correctedClaim": "isValid() only checks for a signed, unexpired validity token (from core.appToken or ENTERPRISE_VALIDITY_TOKEN); ENTERPRISE_KEY is used to fetch or refresh it. Without one, server-enforced: SSO, RLS predicate API, audit logs, a sixth workspace, custom AI providers above 25 seats. The AI usage tab is front-end only.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/core-modules/enterprise/services/enterprise-plan.service.ts:220",
+        "packages/twenty-server/src/engine/core-modules/enterprise/services/enterprise-plan.service.ts:196",
+        "packages/twenty-server/src/engine/core-modules/usage/usage.resolver.ts:40",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAiUsageTab.tsx:26"
+      ],
+      "reason": "isValid() returns hasValidEnterpriseValidityToken() and does not read the key payload. getUsageAnalytics on the server has only AuthPrincipalGuard + SettingsPermissionGuard(WORKSPACE), with no enterprise check, so the AI-usage gate is display-only. The other gates were verified: EnterpriseFeaturesEnabledGuard on SsoResolver, hasRowLevelPermissionFeature, the event-log isValid check, and MAX_WORKSPACES_WITHOUT_ENTERPRISE_KEY = 5."
+    },
+    {
+      "id": "Q7c-5",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-checked: client-config shows isBillingEnabled False, isClickHouseConfigured False, canManageFeatureFlags True, aiModels 0. Distinct active users = 1005, and getBillableSeatCount uses the same query. The .env ENTERPRISE line is commented out. keyValuePair holds only SERVER_ID and agent-history-storage-v1 (x2), and appToken has no EnterpriseValidityToken rows (REFRESH_TOKEN count is now 2). Threshold is 25."
+    },
+    {
+      "id": "Q7d-1",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Fetched the GitHub release pages. v2.40.0 (15 Sep), v2.41.0 (17 Sep), v2.43.0 (28 Sep) and v2.44.0 (1 Oct) each have a Breaking changes section. v2.44.0 lists agent-step conversations, agent step pausing on a question, and manifest-only registration variables. twenty/v2.42.0 (23 Sep) is a bare tag page."
+    },
+    {
+      "id": "Q7d-2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Commands exist as cited: 2-40 sync-record-share-object and core-workflow-id backfills; 2-41/2-42/2-43 core workflow pointers; 2-42 migrate-agent-history-to-workspace; 2-43 enable-common-record-sharing, with the quoted comment at line 92; 2-44 verify-common-record-sharing and move-agent-chat-threads-to-record-model. rollout.md keeps the core index page behind the flag. SQL shows core.workflow and core.workflowVersion."
+    },
+    {
+      "id": "Q7e-1",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Manifest type at manifestType.ts:35 matches the listed arrays (it also has publicAssets and translations). MANIFEST_ENTITY_REGISTRY maps workflow, workflowVersion, validationRule, webhook, rolePermissionFlag, applicationVariable and searchFieldMetadata to NO_MANIFEST_CANDIDATES. canManifestExpressFlatEntity excludes webhook."
+    },
+    {
+      "id": "Q7e-2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "LogicFunctionManifest has exactly the six trigger settings. ApplicationManifest has pre/post-install, uninstall and health-check logic function hooks. RouteTriggerController is mounted on ApiPath.RouteTrigger = 's'. Caveat: LOGIC_FUNCTION_LEGACY_ROUTE_CUTOFF can move new HTTP functions to the isolated public domain when PUBLIC_DOMAIN_URL is set."
+    },
+    {
+      "id": "Q7e-3",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "WorkflowActionType has 20 values. The factory switch throws the quoted error on its default branch. The LOGIC_FUNCTION action returns only result or error. pendingEvent: true appears only in the form, delay and ai-agent actions. WorkflowTriggerType = DATABASE_EVENT, MANUAL, CRON, WEBHOOK."
+    },
+    {
+      "id": "Q7e-4",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "ToolCategory has 10 values. The TOOL_PROVIDERS factory is a fixed list of 10 providers. LogicFunctionToolProvider includes functions with toolTriggerSettings that pass canCallerReachApplication, names them app_<slug> and tags them LOGIC_FUNCTION. MCP direct mode lists all registry categories."
+    },
+    {
+      "id": "Q7e-5",
+      "verdict": "imprecise",
+      "correctedClaim": "Workflow Agent steps preload only DATABASE_CRUD and ACTION registry tools. runAgent gets lazy learn_tools/execute_tool over DATABASE_CRUD, ACTION, DASHBOARD, WORKFLOW; both get none if the agent has no role. Model-native web search and twitter search are bound per modelConfiguration. No LOGIC_FUNCTION tools or load_skills.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:351",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:359"
+      ],
+      "reason": "The core claim holds. It omits that native tools include twitterSearch as well as webSearch, both opt-in per agent modelConfiguration, and that registry tools are bound only when the agent has a role."
+    },
+    {
+      "id": "Q7e-6",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "PAUSING_TOOLS maps ask_questions, propose_email and request_form. The workflow AI agent action passes them only when isAskingQuestionsAllowed. agent-run.service passes no pausingTools (default {}). The ToolCallAnswerResolver guard has apiKey: false and requires a user for oauth/application principals."
+    },
+    {
+      "id": "Q7e-7",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "AI_SDK_PACKAGES lists the nine packages. sdk-provider-factory switches over them and throws 'Unsupported SDK package'. ai-providers.json has six catalog providers whose apiKey templates are OPENAI, ANTHROPIC, GOOGLE, MISTRAL, XAI and TYPESAFE_AI _API_KEY. Custom entries come from AI_PROVIDERS or admin-panel addAiProvider, both subject to the seat gate."
+    },
+    {
+      "id": "Q7e-8",
+      "verdict": "imprecise",
+      "correctedClaim": "PermissionFlagType is a closed 26-value enum; apps add flags via definePermissionFlag ('settings' or 'tool'). APPLICATION writability allows writes only from system context, or a user or application auth context whose application is the owning app, not strictly its logic functions.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/twenty-orm/utils/is-owning-application-auth-context.util.ts:7"
+      ],
+      "reason": "isOwningApplicationAuthContext accepts user auth contexts that carry application === owning app, as well as application contexts, so the restriction is per owning-app principal. The docs' 'only your app's own logic functions' is a simplification. The 26-flag count and the manifest flag type were verified."
+    },
+    {
+      "id": "Q7e-9",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "The docs list four locations and four ways to surface a component. WidgetType has 26 values including FRONT_COMPONENT. PageLayoutType is a closed 5-value enum. TimelineActivityTypeManifest and ToolTriggerSettings both carry frontComponentUniversalIdentifier."
+    },
+    {
+      "id": "Q7e-10",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "STANDARD_OBJECTS has 40 top-level keys. DatabaseEventAction has six values. findLogicFunctionsTriggeredByEventName matches the four wildcard patterns quoted. Webhook is in METADATA_NAMES_WITHOUT_MANIFEST_REPRESENTATION."
+    },
+    {
+      "id": "Q7e-11",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "AgentEntity.evaluationInputs exists; AgentManifest has no such field. evaluateAgentTurn(turnId) and runEvaluationInput(agentId, input) are on AgentTurnResolver, with AI_SETTINGS permission; runEvaluationInput rejects API keys. The grader uses getDefaultModelForTier('fast') and a hard-coded rubric prompt. I found no grader extension point."
+    }
+  ],
+  "missed": [
+    {
+      "subQuestion": "Q7a",
+      "claim": "Real (non-seeded) workspaces get IS_REST_METADATA_API_NEW_FORMAT_DIRECT and IS_EXECUTION_QUOTA_ENABLED switched on at activation. The seeded dev workspaces lack IS_REST_METADATA_API_NEW_FORMAT_DIRECT, so the local metadata REST format can differ from a freshly created self-hosted workspace.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/workspace-manager/workspace-migration/constant/default-feature-flags.ts:3",
+        "packages/twenty-server/src/engine/core-modules/workspace/services/workspace.service.ts:547"
+      ],
+      "evidenceQuote": "export const DEFAULT_FEATURE_FLAGS = [ FeatureFlagKey.IS_REST_METADATA_API_NEW_FORMAT_DIRECT, FeatureFlagKey.IS_EXECUTION_QUOTA_ENABLED, ]"
+    },
+    {
+      "subQuestion": "Q7a",
+      "claim": "The server never checks IS_FEATURE_FLAG_MANAGEMENT_ENABLED; it only feeds canManageFeatureFlags in client-config, which hides or shows the admin-panel Feature Flags tab. Any full admin with SECURITY permission can call updateWorkspaceFeatureFlag on /admin-panel in production.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/client-config/services/client-config.service.ts:279",
+        "packages/twenty-server/src/engine/core-modules/admin-panel/admin-panel.resolver.ts:243"
+      ],
+      "evidenceQuote": "canManageFeatureFlags: this.twentyConfigService.get('NODE_ENV') === NodeEnvironment.DEVELOPMENT || isBillingEnabled || this.twentyConfigService.get('IS_FEATURE_FLAG_MANAGEMENT_ENABLED'),"
+    },
+    {
+      "subQuestion": "Q7c",
+      "claim": "Record sharing is Enterprise-licensed code with no runtime gate. The RECORD_SHARING billing entitlement and IS_RECORD_SHARING_ENABLED flag are read only by the 2-43 upgrade command, to preserve historical access. Without a key, record sharing is restricted by the license, not by the software.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-43/2-43-workspace-command-1790312694997-enable-common-record-sharing.command.ts:92",
+        "packages/twenty-server/src/engine/core-modules/billing/enums/billing-entitlement-key.enum.ts:7"
+      ],
+      "evidenceQuote": "// This reads the former entitlement only to preserve historical access; // neither the new sharing API nor record authorization depends on it."
+    },
+    {
+      "subQuestion": "Q7c",
+      "claim": "The getUsageAnalytics query has no enterprise-key check on the server: it needs only the WORKSPACE settings permission, plus ClickHouse for data. The enterprise gate for AI usage exists only in the front-end SettingsAiUsageTab.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/usage/usage.resolver.ts:40",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAiUsageTab.tsx:26"
+      ],
+      "evidenceQuote": "SettingsPermissionGuard(PermissionFlagType.WORKSPACE), ) async getUsageAnalytics("
+    },
+    {
+      "subQuestion": "Q7c",
+      "claim": "LICENSE declares twenty-shared MIT, yet five twenty-shared files (the RowLevelPermissionPredicate* types) carry the Enterprise header. By LICENSE rule 1 those files fall under the commercial license even inside the MIT package that apps depend on.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/types/RowLevelPermissionPredicate.ts:1",
+        "LICENSE:3",
+        "LICENSE:5"
+      ],
+      "evidenceQuote": "Files with this comment are not licensed under the AGPLv3, but instead are subject to the commercial license terms defined at the end of this file."
+    },
+    {
+      "subQuestion": "Q7b",
+      "claim": "User-guide workflow pages carry maturity labels the research omitted: webhook-trigger authentication is 'coming soon', and Form steps are documented as meant for manual triggers only until a 2026 notification center ships.",
+      "sourceType": "docs",
+      "refs": [
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-triggers.mdx:113",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-actions.mdx:225"
+      ],
+      "evidenceQuote": "- Configure authentication (coming soon)."
+    }
+  ],
+  "testPlanIssues": [
+    "Plan 'Where an app-defined tool is visible', step 3: getToolIndex does not work with an API key. The resolver resolves roles through userRoleService.getRoleIdForUserWorkspace(userWorkspaceId), and that throws when there is no user workspace. Fix: call getToolIndex with a user access token only, and use the API key only for the MCP tools/list check.",
+    "Plan 'Baseline', step 4 expected output: the keyValuePair query returns three rows (agent-history-storage-v1 twice, plus SERVER_ID), not two distinct keys. The enterprise validity token would be stored in core.appToken as type EnterpriseValidityToken, not in keyValuePair. Fix: expect 3 rows, and check the appToken type list for the absence of EnterpriseValidityToken. The REFRESH_TOKEN count is currently 2 and will vary.",
+    "Plan 'Turn an internal feature flag on', expected section: updateWorkspaceFeatureFlag is enforced by the user session, SettingsPermissionGuard(SECURITY) and canAccessFullAdminPanel, not by IS_FEATURE_FLAG_MANAGEMENT_ENABLED. Fix: add a check that the mutation is rejected with an API key and that the tab visibility comes from client-config canManageFeatureFlags. tim@apple.dev has canAccessFullAdminPanel = t, verified by SQL.",
+    "Plan 'Row-level permissions', step 2 expected message: the server string is 'Row level permission predicate feature is disabled.' (with a trailing period). The input fields roleId, objectMetadataId, predicates and predicateGroups are confirmed by introspection.",
+    "Plan 'Custom AI provider seat gate', expected: 'addAiProvider would be rejected with ENTERPRISE_SEAT_THRESHOLD_EXCEEDED' is correct (admin-panel-ai-provider.service.ts). But CustomAiProviderAccessService starts with hasAccess = true until its first seat count, so model resolution on a freshly started process may briefly include custom providers. Run getCustomAiProviderAccess first, which recomputes the verdict, before checking model lists."
+  ]
+}

@@ -1,0 +1,105 @@
+# Handoff: continue this project on another machine
+
+Written 2026-10-06 on the Mac. Read this first when you open the project anywhere new. If you use Claude Code, start it in the repo folder and say: "Read docs/HANDOFF.md and continue from there."
+
+Update 2026-10-06: the Windows local setup was dropped. Development now happens in Claude Code cloud sessions on branch `local-dev`. The fork was renamed to `oguz-kara/real-estate-crm`. Cloud containers are ephemeral: commit and push anything worth keeping before the session ends. When cloning, fetch only `local-dev` (full history is ~2 GB).
+
+## What this project is
+
+- A fork of Twenty CRM (`twentyhq/twenty`), based on tag `twenty/v2.44.0`, on branch `local-dev`.
+- Two goals: a portfolio project that shows full-stack and AI skills, and a CRM for the owner's wife's company (customers and leads). It is not a commercial product.
+- Plan: build a vertical extension with Twenty's app platform and AI layer (custom objects, custom agent tools, an approval step, its own evals), and change core code only where the app platform cannot do the job.
+
+## Decisions already made
+
+- Keep the full source (a fork), not only `create-twenty-app`.
+- Do not build on files marked `/* @license Enterprise */` (billing, SSO, row-level permissions, record sharing).
+- Twenty requires Yarn 4; do not use pnpm or npm in this repo.
+- Keep explanations short and in plain language.
+
+- The fork stays public. There will be no pull requests to Twenty; the work is only for the owner's own business domain.
+- Secrets and real customer data never go into git.
+
+## How the owner likes to work (for Claude)
+
+- Answer in the language the owner writes in (Turkish or English). Keep answers short, plain and decision-first; no long option lists.
+- The owner is on a usage-limited plan. Before any multi-agent or long high-effort run, say roughly what it will cost and prefer the cheapest approach. Save results to `docs/` as they are produced.
+- Ask before installing system-level tools or changing global versions.
+- For their own projects the owner uses pnpm; this repo is the exception because Twenty requires Yarn 4.
+
+## Where the code lives
+
+- GitHub: `https://github.com/oguz-kara/real-estate-crm` (public fork of Twenty, renamed). Work branch: `local-dev`. The default branch `main` is Twenty's own code.
+- Clone with: `git clone --depth 1 --single-branch --branch local-dev https://github.com/oguz-kara/real-estate-crm.git`
+- After cloning, add Twenty's repo for updates: `git remote add upstream https://github.com/twentyhq/twenty.git`
+
+## What was learned the hard way
+
+- An app's custom tools show up in AI chat and MCP, but workflow AI Agent steps and `runAgent` do not load them. Plan custom agent tools around that (see `docs/PLATFORM-NOTES.md`, sections 2 and 7).
+- AI chat uses the logged-in user's role and ignores a role assigned to an agent.
+- There is no "manual approval" step. Use the workflow Form step as the approval gate; it has no reject button and no timeout.
+- API keys cannot run or answer workflows, and cannot create other API keys. Those need a user session token (login mutations are on `/metadata`).
+- `create-twenty-app` opens a browser and runs `corepack enable` on its own. Pin it to the server's version (`create-twenty-app@2.44.0`) and add the remote first with `twenty remote:add --url <server> --api-key <key>`.
+- The first page load after `npx nx start` takes about a minute, and the backend restarts once while shared code rebuilds.
+- DeepSeek rejects Twenty agents with `responseFormat: { type: 'json' }`: Twenty's second "structured output" call never contains the word "json", which DeepSeek's JSON mode requires. Use a text-mode agent that is told to answer with a bare json object, and parse it in code.
+- `runAgent` needs the AI permission flag. An app's logic functions only get it through `permissionFlagUniversalIdentifiers: [SystemPermissionFlag.AI]` on the app's default role; without it the call fails with "Entity performing the request does not have permission".
+- Logic function `console` output does not go to the server log. Stream it with `yarn twenty dev:function:logs` in the app folder.
+- The hello-world test app is not in this repo. It lived in a scratch folder on the Mac; recreate it with the commands in section 1 of the short note.
+
+## What is already done
+
+- `apps/emlak-app/`: the Emlak SDK app. Defines the `property` object with the full sahibinden schema (~56 fields + 8 multi-select groups, Turkish labels, locale-ready via `TWENTY_APP_LOCALE`), a unique `externalId` index, 4 default views, a sidebar entry, the `search_properties` AI tool (chat + MCP) and the import CLI (`yarn import:sahibinden <file> [--dry-run]`, idempotent, rate-limit aware, writes a calibration report). Sync with `yarn twenty apply` after `twenty remote:add`; run `yarn` there first. Spec and plan: `docs/superpowers/`.
+- Follow-up reminders (feature 2): four app fields on Person (`followUpStage/Status`, `lastTouchedAt`, dedupe marker), the "Takip Bekleyenler" view, and the `follow-up-sweeper` logic function (nightly cron 03:15 + manual AI/MCP trigger). Touch = note or completed task on the person; thresholds 3/7/30 days in `src/constants/follow-up-thresholds.ts`; one task per lapse. Spec/plan in `docs/superpowers/`.
+- Buyer request matching (feature 3): `buyerRequest` ("Talepler") and `propertyMatch` ("Eşleşmeler") objects with a unique `(requestId, propertyId)` index, deterministic matching (7 hard rules + 0-100 soft score in `src/matching/`, weights in `src/constants/match-scoring.ts`). Instant matching fires on request create/update (criteria fields only); `request-match-sweeper` (nightly cron 03:45 + manual trigger) catches new properties and opens one task per request with new matches; `match_buyer_request` is the per-request AI/MCP tool. Match statuses (Yeni/Beğenmedi/...) are office-owned and never overwritten; scores refresh automatically. Model-free by design — an LLM re-rank can be layered later. Spec/plan in `docs/superpowers/`.
+- Cron live-fire verified (2026-10-07) — WITH A CRITICAL OPS FINDING: Twenty app crons only fire if the per-minute dispatcher (`CronTriggerCronJob`) is registered in Redis via `node dist/command/command.js cron:register:all` (run in `packages/twenty-server`; registers 26 repeatable jobs on `bull:cron-queue`). This registration is Redis state: a fresh environment or any Redis reset (e.g. `setup-dev-env.sh`) wipes it and NO cron fires until the command is re-run — add it to every environment setup. Verification method (repeatable): temporarily set both sweepers' `cronTriggerSettings.pattern` to `*/2 * * * *`, `yarn twenty apply`, watch the worker log for two `LogicFunctionTriggerJob` completions on the next 2-minute boundary, confirm task counts stay deduped in psql, restore the real patterns (03:15 / 03:45) and re-apply. Both sweepers fired and completed successfully on schedule.
+- WhatsApp/communication log was evaluated and deliberately dropped (2026-10-06): the office's flow is "WhatsApp message in → phone call back", and notes already count as touches for the follow-up sweep. The office rule is: after any conversation (phone/WhatsApp/in-person), drop a short note on the person. Revisit only as a WhatsApp Business API integration if the office adopts the CRM heavily.
+- Bilingual metadata labels (2026-10-06): Emlak app manifest sources are ENGLISH (metadataLabel in `app-locale.ts`) and `apps/emlak-app/locales/tr-TR.json` carries the Turkish catalog (synced into `core.applicationTranslation` on every `yarn twenty apply`; verify the row count after applies — sync failures are only logged). After adding entities: `yarn i18n:extract && yarn i18n:fill` (fill reads the en→tr pairs recorded by metadataLabel; context collisions and non-manifest base fields live in GROUP_OVERRIDES in `scripts/fill-tr-catalog.ts`). SELECT option labels are untranslatable platform-wide and stay Turkish (trLabel). The server resolves labels from `core.userWorkspace.locale` (NOT workspaceMember.locale, NOT the x-locale header on authenticated calls) — set language via Settings → Experience or the updateWorkspaceMemberSettings mutation on /metadata.
+- AI chat assistant (2026-10-07): "Emlak Asistanı" agent (`apps/emlak-app/src/agents/`), Turkish prompt, model `deepseek/deepseek-flash` (switched from v4-pro 2026-10-07 for cost; composite id, custom providers register as `provider/model`), bound to a read-only `defineRole` (read all, write nothing, no tools) — the read-only guarantee is permission-layer, not prompt. DeepSeek plugs in via the `AI_PROVIDERS` JSON in `packages/twenty-server/.env` (openai-compatible + baseUrl; key is owner-provided, never in git). OPS NOTES: (1) `setup-dev-env.sh` resets `.env` on every run — re-append the AI_PROVIDERS line (snippet in the eval ledger / ask Claude); (2) SEAT-LIMIT CLEANUP — the dev seeder creates 1000 fake users which trips Twenty's 25-seat free limit for custom AI providers. The cleanup MUST touch BOTH tables or the UI login breaks: soft-delete the fake `userWorkspace` rows (seat count) AND the fake `workspaceMember` rows (UI `GetCurrentUser` iterates members and throws "UserEntity workspace not found" if a member has no active userWorkspace). After any DB reset, re-run both, then restart the server (seat verdict caches 1h):
+  `UPDATE core."userWorkspace" SET "deletedAt"=now() WHERE "userId"::text LIKE '30303030%' AND "deletedAt" IS NULL;`
+  `UPDATE <workspace_schema>."workspaceMember" SET "deletedAt"=now() WHERE "userId"::text LIKE '30303030%' AND "deletedAt" IS NULL;`
+  (the real office at 2-3 seats never hits this). Controlled eval: `yarn eval:chat <model-label>` in apps/emlak-app runs 15 Turkish scenarios (correct/unknown/refuse/trap) with automated guardrail checks and a write audit; deepseek-flash clean run 15/15 (report in `evals/chat-assistant/results/`). Re-run the eval after any prompt/model change.
+- HOW THE ASSISTANT IS ACTUALLY USED (platform reality, confirmed 2026-10-07 and in docs/PLATFORM-NOTES.md §2/§3): Twenty's sidebar AI chat "runs no agent" and "uses the logged-in user's role", so the Emlak Asistanı agent (its Turkish prompt + read-only role + deepseek-flash) CANNOT be opened as a chat in the UI — it runs only via `runAgent` API and eval runs (what the harness drives). The built-in chat CAN still answer property questions in Turkish because the app's `search_properties` tool shows up in chat, but it uses the user's own role, a per-chat model picker (the bars icon in the chat input; workspace default "Smart Model" is Opus and must be changed to a DeepSeek model since there is no Anthropic key), and the default prompt — not the locked-down agent. Two paths to give the office the real read-only assistant: (a) pragmatic/no-code — give office members a read-only role, put the Turkish rules in Settings → AI → "Çalışma Alanı Talimatları", default Smart Model to DeepSeek Flash; (b) proper — a custom front-component chat bound to runAgent + the agent (future feature, own spec).
+- Free-text request intake (2026-10-07, feature "metinden talep çıkar"): on a Person record, the command menu item "Metinden talep çıkar" opens a side-panel form; the pasted text (WhatsApp message, call transcript, visit note, old notebook line) goes to `POST /s/talep/cikar` (`src/logic-functions/talep-cikar-route.ts` → `src/intake/run-intake.ts`). KVKK: the customer's phones, e-mails and name are masked in code (`src/intake/mask-pii.ts`, `[TELEFON_n]` / `[EPOSTA_n]` / `[MÜŞTERİ]`) before anything reaches DeepSeek; if anything identifying survives masking the agent is not called at all. The zero-access `talep-cikarici` agent (deepseek-flash, ~$0.003 per text) returns a json object; all parsing (amounts like "1.2 milyon euro", spoken numbers, rooms, İzmir districts with neighborhood aliases and vowel-less shorthand, amenities) is deterministic code in `src/intake/normalize-draft.ts`. The result is a buyerRequest with status TASLAK (never matched while a draft), `source`/`sourceText`/`extraction` audit fields, a review task "Taslak talebi onayla: <kişi>", and the "Onay Bekleyen Talepler" view; setting the status to Aktif triggers the existing matching. Extraction failure still saves a draft holding the source text. Eval: `yarn eval:intake <label> [--only W3,S2]` runs 15 fake-customer scenarios (WhatsApp / speech-to-text / notebook styles) with masking assertions, a write audit and full cleanup; deepseek-flash 15/15 after the shorthand fix (`evals/talep-cikarimi/results/`). Masking covers the selected person's name, Turkish phone numbers, e-mails, TC kimlik numbers and TR IBANs. Known limits: a phone number spoken as words, foreign or 7-digit local numbers, and names of OTHER people mentioned in the text (spouse, colleague) are not masked. The app's default role carries the AI permission flag so the route can call `runAgent`; that flag is app-wide, so every Emlak logic function could run any workspace agent. Not in v1: chat adapter, automatic intake from notes, speech-to-text upload, creating the person from the text. Spec/plan in `docs/superpowers/`.
+- Turkish UI (2026-10-06, workspace state — NOT in git): Twenty ships a near-complete tr-TR catalog; the UI language is per workspace member (`workspaceMember.locale`). Tim Apple's member was set to `tr-TR` via REST — do the same for each office member (or via Settings → Experience → Language). Core object/field labels (People, Companies, Emails…) stay English by explicit decision: API names and core labels untouched, only UI chrome localized. App metadata labels stay in the language active at `yarn twenty apply` time (currently Turkish) — accepted trade-off.
+- Sidebar cleanup (2026-10-06, workspace state — NOT in git): dev-seed demo objects (pet, petCareAgreement, surveyResult, employmentHistory, rocket) deleted via metadata API; opportunity + workflow/workflowRun/workflowVersion objects deactivated (reversible in Settings → Data model; opportunity may return later as a deal/commission-tracking object once matches reach negotiation). "Star History" nav shortcut deliberately left. A fresh environment re-seeds the demo objects (`database:reset` runs the dev seeder), so redo this cleanup after any reset; a real production workspace never gets them.
+- The real sahibinden export (41 İzmir listings) was calibrated and imported into the local dev workspace on 2026-10-06. The export file and the imported database are NOT in git (real data, public repo) and the cloud container is ephemeral — after a fresh session, re-run the import with the export file to repopulate. Calibration state lives in code (option sets + mappings), so a re-import is minutes, not work.
+
+- `LOCAL-SETUP.md` (repo root): how it was set up and started on the Mac. The ports there (5433, 6380, 3002) were chosen only because the Mac had other projects running. On a clean machine use the default ports from the official docs.
+- `docs/PLATFORM-NOTES.md`: short note on what the platform supports, where permissions leak, and what needs a fork. Read it before proposing features.
+- `docs/PLATFORM-RESEARCH-FULL.md` and `docs/research-raw/`: every finding and every test step behind the short note.
+
+## Not done yet
+
+- Nothing that calls an LLM was tested (no provider key was set). To enable AI, put `ANTHROPIC_API_KEY=` or `OPENAI_API_KEY=` in `packages/twenty-server/.env` and restart the server and worker. The steps for the AI tests are in the long version.
+- No feature work has started. Suggested first step: list the first five features for the wife's company and sort each into "an app can do this" or "needs a core change".
+
+## Setting up in a Claude Code cloud session
+
+The container ships Node 22 but the repo needs `^24.5.0`, so install Node 24 first. From the repo root:
+
+1. `curl -fsSL -o /tmp/node24.tar.xz https://nodejs.org/dist/v24.16.0/node-v24.16.0-linux-x64.tar.xz && tar -xf /tmp/node24.tar.xz -C /opt && export PATH=/opt/node-v24.16.0-linux-x64/bin:$PATH`
+2. `bash packages/twenty-utils/setup-dev-env.sh` (starts local Postgres 16 and Redis, creates databases and `.env` files on the default ports)
+3. `yarn` (about 10 minutes), then `npx nx database:init twenty-server` if the script said so
+4. `yarn start` — backend on :3000, frontend on :3001
+
+To avoid repeating this every session, put steps 1-3 in the cloud environment's Setup script (environment menu in the session title bar, then Edit).
+
+## Setting up on Windows (dropped, kept for reference)
+
+The official docs support Windows only through WSL (Ubuntu inside Windows). See `packages/twenty-docs/developers/contribute/capabilities/local-setup.mdx`, tab "Windows (WSL)".
+
+1. In PowerShell as Administrator: `wsl --install`, then restart.
+2. Do everything else inside the WSL terminal, and clone the repo inside the WSL file system (for example `~/projects/twenty`), not under `/mnt/c`.
+3. Install Node `^24.5.0` (the repo's `.nvmrc` pins a 24.x version) with nvm, then `corepack enable`.
+4. Postgres 16 and Redis: install them inside WSL, or use Docker Desktop with WSL2 integration and run `make -C packages/twenty-docker postgres-on-docker` and `redis-on-docker`.
+5. `cp packages/twenty-front/.env.example packages/twenty-front/.env` and the same for `packages/twenty-server`. The `.env` files are not in git, so they do not come with the clone.
+6. `yarn`, then `npx nx database:reset twenty-server`, then `npx nx start`.
+7. Open http://localhost:3001 and log in with `tim@apple.dev` / `tim@apple.dev`.
+
+The database does not travel with the repo. The Windows machine starts with fresh seed data, so the test leftovers on the Mac (PN-prefixed roles, keys, app, workflows) will not exist there.
+
+## Keeping up with Twenty
+
+- Remote `upstream` points at `https://github.com/twentyhq/twenty.git`; `origin` is the fork.
+- Pull Twenty's changes every few weeks: `git fetch upstream --tags`, then merge the newest `twenty/vX.Y.Z` release tag into `local-dev`.
+- Twenty's own CI rejects commits with AI co-author trailers. That only matters if you send a pull request to Twenty.
