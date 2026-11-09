@@ -1,0 +1,266 @@
+{
+  "test": "mcp",
+  "steps": [
+    {
+      "goal": "Load credentials from the previous test",
+      "command": "source /Users/bussss/projects/twenty-playground/.pn-env (names only printed); SELECT k.id,k.name,r.label FROM core.\"apiKey\" k JOIN core.\"roleTarget\" rt ON rt.\"apiKeyId\"=k.id JOIN core.role r ON r.id=rt.\"roleId\" WHERE k.name LIKE 'pn-%'",
+      "observed": "Found PN_ADMIN_KEY, PN_LIMITED_KEY and PN_RESTRICTED_FIELD=domainName. Key f2ae6798-... pn-admin-key is bound to Admin and key 3c06c28f-... pn-limited-key to PN Limited (role f557b6ec-...). Neither is revoked; both expire 2027-12-31.",
+      "status": "pass",
+      "note": "Nothing had to be created. df -h ~ showed 4.8 GiB free before the npx install."
+    },
+    {
+      "goal": "Call POST /mcp initialize without credentials",
+      "command": "curl -i -X POST http://localhost:3000/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",...}'",
+      "observed": "HTTP 401 with body {\"statusCode\":401,\"error\":\"UnauthorizedException\",\"messages\":[\"Unauthorized\"]}. Headers: WWW-Authenticate: Bearer resource_metadata=\"http://localhost:3000/.well-known/oauth-protected-resource/mcp\", scope=\"api profile\"; Access-Control-Allow-Origin: *; Access-Control-Expose-Headers: WWW-Authenticate.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Check the non-POST methods",
+      "command": "curl -i http://localhost:3000/mcp ; curl -i -X OPTIONS http://localhost:3000/mcp -H 'Origin: http://example.com' -H 'Access-Control-Request-Method: POST'",
+      "observed": "GET: 405 with Allow: POST and JSON-RPC error -32600 'HTTP method GET is not allowed. This MCP endpoint only accepts POST requests.' OPTIONS: 204 from CORS (Allow-Methods GET,HEAD,PUT,PATCH,POST,DELETE).",
+      "status": "pass",
+      "note": "Matches the reviewer's correction: OPTIONS gets 204, not 405."
+    },
+    {
+      "goal": "GET the discovery endpoints without credentials",
+      "command": "curl http://localhost:3000/.well-known/{mcp/server-card.json, oauth-protected-resource, oauth-protected-resource/mcp, oauth-authorization-server, api-catalog}; curl -o /dev/null -w '%{http_code}' 'http://localhost:3000/oauth/authorize?client_id=x&response_type=code'",
+      "observed": "All five returned 200. Server card: name com.twenty/twenty, version 0.0.0, remote streamable-http at http://localhost:3000/mcp, protocol 2025-06-18, optional Authorization header. Authorization server: authorization_endpoint http://localhost:3002/authorize?iss=..., registration /oauth/register, S256. api-catalog lists /mcp. /oauth/authorize: 404.",
+      "status": "pass",
+      "note": "The oauth-authorization-server GET only reads, because the 'Twenty CLI' registration row already existed (cli_client_id is shown)."
+    },
+    {
+      "goal": "initialize with the admin key",
+      "command": "POST /mcp, Authorization: Bearer <redacted admin>, Accept: application/json, text/event-stream, method initialize (protocolVersion 2025-06-18)",
+      "observed": "HTTP 200 as text/event-stream (event: message / data: ...), no mcp-session-id. protocolVersion 2025-06-18, serverInfo {name:'Twenty MCP Server', version:'0.1.0'}, capabilities tools/resources/prompts each listChanged:false, instructions of 6751 chars listing 33 object names and the meta-tools.",
+      "status": "pass",
+      "note": "With Accept: application/json only, replies are plain JSON. No MCP-Protocol-Version header or session header is needed."
+    },
+    {
+      "goal": "Send notifications/initialized",
+      "command": "POST /mcp {\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"} (admin key)",
+      "observed": "HTTP 202, empty body.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "tools/list with the admin key",
+      "command": "POST /mcp {\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"} (admin key)",
+      "observed": "HTTP 200, 7 tools: search_help_center, get_tool_catalog, execute_tool, load_skills, list_object_metadata_names, list_skills, learn_tools. Only execute_tool has readOnlyHint false; its destructiveHint is false and openWorldHint true.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "resources/list, prompts/list, resources/read and ping",
+      "command": "POST /mcp with method resources/list, prompts/list, resources/read and ping (admin key)",
+      "observed": "resources/list returned {resources:[]}, prompts/list {prompts:[]}, resources/read error -32601 \"Method 'resources/read' not found\", ping result {}. All HTTP 200.",
+      "status": "pass",
+      "note": "The server advertises resource and prompt capabilities but serves none."
+    },
+    {
+      "goal": "Follow the catalog indirection: get_tool_catalog",
+      "command": "tools/call get_tool_catalog {} and {categories:[DATABASE_CRUD]} (admin key)",
+      "observed": "isError false. Catalog: ACTION 9, DATABASE_CRUD 285, METADATA 13, NAVIGATION_MENU_ITEM 4, ROLE 7, VIEW 22, WEBHOOK 4, WORKFLOW 22, DASHBOARD 7. Company tools: find_many, find_one, group_by, create_one/many, update_one/many, upsert_many, delete_one/many. People tools likewise.",
+      "status": "pass",
+      "note": "There was no LOGIC_FUNCTION category in this workspace's catalog."
+    },
+    {
+      "goal": "learn_tools for the schemas",
+      "command": "tools/call learn_tools {toolNames:[find_many_companies,create_one_company],aspects:[schema]} (admin key)",
+      "observed": "isError false, notFound []. find_many_companies requires select and has properties limit, offset, orderBy, select, name, domainName, ... or/and/not. create_one_company lists required ['position','tagline'].",
+      "status": "unexpected",
+      "note": "The learned schema marks position and tagline as required, but a create with only name succeeded (next step)."
+    },
+    {
+      "goal": "Read 2 companies with the admin key",
+      "command": "tools/call execute_tool {toolName:find_many_companies, arguments:{limit:2, select:[id,name,domainName]}}",
+      "observed": "isError false: {success:true, message:'Found 2 company records', records:[Housecall Pro (housecallpro.com), Odessa (odessainc.com)], count:'601', hasNextPage:true, recordReferences:[...]}.",
+      "status": "pass",
+      "note": "count is returned as a string."
+    },
+    {
+      "goal": "Write: create a company with the admin key",
+      "command": "tools/call execute_tool {toolName:create_one_company, arguments:{name:'PN MCP Test Co'}}",
+      "observed": "isError false: {success:true, message:'Record created successfully in company', result:{id:'8522b5d6-c094-4423-94f1-a78288ef2b6c'}}.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Audit trail of the MCP write",
+      "command": "docker exec twenty_pg psql ... SELECT \"createdBySource\",\"createdByName\",\"createdByWorkspaceMemberId\",\"createdByContext\",\"updatedBySource\",\"updatedByName\" FROM workspace_1wgvd1injqtife6y4rvfbu3h5.company WHERE id='8522b5d6-...'; plus SELECT * FROM timelineActivity WHERE targetCompanyId=...",
+      "observed": "createdBySource AGENT, createdByName pn-admin-key, createdByWorkspaceMemberId NULL, createdByContext NULL; updatedBySource API, updatedByName pn-admin-key; position -2. One timelineActivity 'recordCreated' with createdBySource MANUAL, name System, workspaceMemberId NULL.",
+      "status": "pass",
+      "note": "Matches the source prediction (AGENT / API). The tool name and the JSON-RPC call are not stored."
+    },
+    {
+      "goal": "Contrast: the same create over REST",
+      "command": "POST /rest/companies {\"name\":\"PN REST Compare Co\"} (admin key); SELECT createdBySource... WHERE name LIKE 'PN %'",
+      "observed": "HTTP 201, id d891b303-7e05-41ab-baff-1d4f1e7c95cd. Row: createdBySource API, createdByName pn-admin-key, updatedBySource API. The MCP row is AGENT/API.",
+      "status": "pass",
+      "note": "Added so the audit difference between MCP and REST could be seen."
+    },
+    {
+      "goal": "Connect a real MCP client: MCP Inspector CLI, pinned",
+      "command": "MCP_CATALOG_PATH=<playground>/pn-mcp/insp/mcp.json MCP_CLIENT_CONFIG_PATH=<playground>/pn-mcp/insp/client.json npx -y @modelcontextprotocol/inspector@2.9.0 --cli http://localhost:3000/mcp --transport http --header \"Authorization: Bearer <redacted admin>\" --method tools/list --format json",
+      "observed": "exit 0. JSON {result:{tools:[7 tools, the same names]}}. stderr: 'Schema portability: 0 errors, 1 warning across 1 tool.'",
+      "status": "pass",
+      "note": "Pinned to 2.9.0 (dist-tag latest; v1-latest is 1.0.2). The Inspector created an empty ~/.mcp-inspector/storage directory despite the env overrides; I removed it."
+    },
+    {
+      "goal": "Inspector tools/call with both keys",
+      "command": "npx -y @modelcontextprotocol/inspector@2.9.0 --cli http://localhost:3000/mcp --transport http --header \"Authorization: Bearer <redacted admin|limited>\" --method tools/call --tool-name execute_tool --tool-args-json '{\"toolName\":\"find_many_companies\",\"arguments\":{\"limit\":2,\"select\":[\"id\",\"name\"]}}' --format json; and --method tools/list with the limited key",
+      "observed": "Admin: exit 0, isError false, Housecall Pro and Odessa, count '602'. Limited: tools/list exit 0 with the same 7 tools; tools/call exit 0 with the same 2 companies.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "tools/list and catalog with the limited key",
+      "command": "tools/list; tools/call get_tool_catalog {} (limited key)",
+      "observed": "tools/list: the same 7 tools. Catalog: ACTION 3 (search_help_center, navigate_app, save_campaign), DATABASE_CRUD 171, NAVIGATION_MENU_ITEM 4 (including create/update/delete), VIEW 5 (get_* only). Company tools: only find_many, find_one, group_by. No person or opportunity tools. About 100 write tools remain, all on system objects (note_targets, attachments, timeline_activities, messages...).",
+      "status": "pass",
+      "note": "The top-level list is identical. The difference is inside the catalog. This matches the reviewer's correction about system-object write tools."
+    },
+    {
+      "goal": "learn_tools with the limited key (field hiding in the schema)",
+      "command": "tools/call learn_tools {toolNames:[find_many_companies,create_one_company,find_many_people,update_one_company],aspects:[schema]} (limited key)",
+      "observed": "Learned only find_many_companies. Its properties do not include domainName. notFound: [create_one_company, find_many_people, update_one_company] with 'did you mean' suggestions.",
+      "status": "pass",
+      "note": "The restricted field is removed even from the filter schema."
+    },
+    {
+      "goal": "People read with the limited key over MCP",
+      "command": "tools/call execute_tool {toolName:find_many_people, arguments:{limit:2, select:[id,name]}} (limited key)",
+      "observed": "HTTP 200, isError true: {success:false, message:'Tool \"find_many_people\" not found', error:'... Did you mean: find_many_messages, find_many_companies, find_many_blocklists? ...'}.",
+      "status": "pass",
+      "note": "Denied as 'tool not found', not as a permission error."
+    },
+    {
+      "goal": "Company read with the limited key over MCP: is the restricted field hidden?",
+      "command": "execute_tool find_many_companies with select ['*'], then ['id','name','domainName'], then ['id','searchVector','domainName'] (limited key)",
+      "observed": "select *: the record has no domainName and no searchVector key. It includes accountOwner {name Phil Schiler} and relation id lists. Explicit domainName or searchVector: success with warnings [\"Field 'domainName' not found on company.\"] / searchVector, and the values are omitted.",
+      "status": "pass",
+      "note": "Asking for the hidden field is not an error over MCP. It is dropped with a warning."
+    },
+    {
+      "goal": "Filter and order by the hidden field over MCP",
+      "command": "execute_tool find_many_companies {select:[id,name], domainName:{primaryLinkUrl:{like:'%apple%'}}}; direct mode find_many_companies with orderBy domainName (limited key)",
+      "observed": "Both: isError true, {success:false, message:'Failed to find company records', error:'Entity performing the request does not have permission'}.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Company write with the limited key over MCP",
+      "command": "execute_tool create_one_company {name:'PN MCP Limited Co'}; ?mode=direct tools/call create_one_company and update_one_company {id:8522b5d6-...,name:'PN MCP Hacked'} (limited key)",
+      "observed": "All isError true: 'Tool \"create_one_company\" not found' / 'Tool \"update_one_company\" not found'. A SELECT afterwards shows no PN MCP Limited Co row, and PN MCP Test Co still has its original name.",
+      "status": "pass",
+      "note": ""
+    },
+    {
+      "goal": "Direct-mode tool listing for both keys",
+      "command": "POST /mcp?mode=direct tools/list (admin, limited)",
+      "observed": "Admin: 376 tools (find_many_people and find_many_companies present, create_one_company present; execute_tool, http_request and code_interpreter absent). Limited: 186 tools (find_many_people False, find_many_companies True, create_one_company False).",
+      "status": "pass",
+      "note": "In direct mode the listing does depend on the role."
+    },
+    {
+      "goal": "Object names visible to the limited key",
+      "command": "initialize (client protocolVersion 2024-11-05) and tools/call list_object_metadata_names (limited key)",
+      "observed": "initialize answered protocolVersion 2025-06-18 regardless of the requested version. The instructions and list_object_metadata_names both include people and opportunities.",
+      "status": "pass",
+      "note": "The server does not negotiate the version. Object names are not filtered by role (mcp-19)."
+    },
+    {
+      "goal": "The same four operations over REST with the limited key",
+      "command": "GET /rest/open-api/core; GET /rest/people?limit=2; GET /rest/companies?limit=1&depth=0; GET /rest/companies?filter=domainName.primaryLinkUrl[like]:%apple%; POST /rest/companies {name:'PN MCP Limited REST Co'}; PATCH /rest/companies/8522b5d6-... {name:'PN MCP Hacked'} (limited key)",
+      "observed": "OpenAPI: 200 with 362 paths for both keys; it includes /people, and the Company schema includes domainName. People: 400 PERMISSION_DENIED. Company read: 200 without domainName but with searchVector \"'housecall':1 'housecallpro.com':3 'pro':2\". Filter, POST and PATCH: 400 {code:'PERMISSION_DENIED', messages:['Entity performing the request does not have permission']}.",
+      "status": "pass",
+      "note": "REST denies with 400 error codes, while MCP returns 200 with isError and 'tool not found'. The decisions are the same, except that REST exposes searchVector."
+    }
+  ],
+  "conclusions": [
+    {
+      "question": "Is the MCP server reachable and how is an unauthenticated call refused?",
+      "claim": "POST /mcp is live. Without credentials it returns 401 with a WWW-Authenticate Bearer header pointing at /.well-known/oauth-protected-resource/mcp, scope 'api profile'. GET returns 405 with Allow: POST; OPTIONS returns 204. All five discovery documents return 200 without authentication.",
+      "status": "verified",
+      "evidence": "Steps 2-4"
+    },
+    {
+      "question": "Protocol version, server info and transport",
+      "claim": "protocolVersion is always 2025-06-18 (the server answered it even when the client asked for 2024-11-05). serverInfo is Twenty MCP Server 0.1.0. Transport is stateless streamable HTTP: no session id, SSE framing when Accept includes text/event-stream, JSON otherwise, 202 for notifications.",
+      "status": "verified",
+      "evidence": "Steps 5, 6, 23"
+    },
+    {
+      "question": "Which tools, resources and prompts are exposed?",
+      "claim": "tools/list always returns the same 7 meta-tools for both keys. resources/list and prompts/list return empty arrays, and resources/read returns -32601. The real catalog sits behind get_tool_catalog, learn_tools and execute_tool: 378 entries for admin, 183 for the limited key. ?mode=direct lists 376 and 186 tools.",
+      "status": "verified",
+      "evidence": "Steps 7, 8, 9, 17, 22"
+    },
+    {
+      "question": "Call sequence for a read and a write",
+      "claim": "The sequence is get_tool_catalog → learn_tools(toolNames, aspects:[schema]) → execute_tool {toolName, arguments}. find_many requires select. The admin read and the create of 'PN MCP Test Co' both succeeded.",
+      "status": "verified",
+      "evidence": "Steps 9-12"
+    },
+    {
+      "question": "Audit trail of an MCP write",
+      "claim": "An MCP create stores createdBySource AGENT and createdByName = the API key name, with no workspace member and no context. updatedBySource is API. A REST create stores API/API, so MCP writes can be told apart. The tool name and JSON-RPC payload are not recorded. The timelineActivity says System.",
+      "status": "verified",
+      "evidence": "Steps 13, 14"
+    },
+    {
+      "question": "Does a real MCP client connect?",
+      "claim": "MCP Inspector 2.9.0 (CLI, --transport http, Authorization header) connected, listed the 7 tools and ran execute_tool. Exit code 0 with both keys.",
+      "status": "verified",
+      "evidence": "Steps 15, 16"
+    },
+    {
+      "question": "Limited key: is the tool list different?",
+      "claim": "The top-level tools/list is identical (7 tools). The role-filtered catalog differs: only find, find_one and group_by for companies, nothing for people or opportunities. Write tools remain for about 25 system objects and for navigation menu items. Direct mode lists 186 tools instead of 376.",
+      "status": "verified",
+      "evidence": "Steps 17, 22"
+    },
+    {
+      "question": "Limited key: are people denied?",
+      "claim": "Yes. Over MCP, find_many_people returns isError true with 'Tool \"find_many_people\" not found' (HTTP 200). Over REST it returns 400 PERMISSION_DENIED. The object names people and opportunities still appear in the instructions and in list_object_metadata_names.",
+      "status": "verified",
+      "evidence": "Steps 19, 23, 24"
+    },
+    {
+      "question": "Limited key: is the restricted Company field (domainName) hidden?",
+      "claim": "Yes over MCP: it is missing from select * results and from the learned schema, an explicit select is dropped with a warning, and filter or orderBy is denied. MCP also drops searchVector. REST hides domainName but returns searchVector containing the domain token 'housecallpro.com'.",
+      "status": "verified",
+      "evidence": "Steps 18, 20, 21, 24"
+    },
+    {
+      "question": "Limited key: is the company write denied?",
+      "claim": "Yes. create_one_company and update_one_company return 'Tool ... not found' over MCP, both through execute_tool and in direct mode. REST POST and PATCH return 400 PERMISSION_DENIED. No row was created or changed.",
+      "status": "verified",
+      "evidence": "Steps 22, 24"
+    },
+    {
+      "question": "Do MCP and REST use the same permission model?",
+      "claim": "Partly. Allow and deny decisions match for object reads, writes and field filters, because the same role and repository checks apply. They differ in how a denial looks (200/isError 'tool not found' versus 400 PERMISSION_DENIED), and REST leaks searchVector where MCP strips it. REST OpenAPI is not role-filtered.",
+      "status": "partly",
+      "evidence": "Steps 17-24"
+    }
+  ],
+  "artefacts": [
+    "Company 'PN MCP Test Co', id 8522b5d6-c094-4423-94f1-a78288ef2b6c, in workspace_1wgvd1injqtife6y4rvfbu3h5.company, created over MCP with pn-admin-key. Remove: MCP execute_tool delete_one_company {id} (soft delete), or REST DELETE /rest/companies/8522b5d6-c094-4423-94f1-a78288ef2b6c with the admin key.",
+    "timelineActivity 32d70f1f-1b4b-4afa-a622-9d9def3b1050 ('recordCreated' for that company), created automatically. Leave it, or it goes away when the company is destroyed.",
+    "Company 'PN REST Compare Co', id d891b303-7e05-41ab-baff-1d4f1e7c95cd, created over REST with pn-admin-key for the audit comparison. Remove: DELETE /rest/companies/d891b303-7e05-41ab-baff-1d4f1e7c95cd with the admin key.",
+    "Directory /Users/bussss/projects/twenty-playground/pn-mcp (chmod 700): helper scripts mcp.py, pick.py, rest.py (they read keys from ../.pn-env and never print them), raw response captures (*.txt, *.json, no tokens; checked with grep), and an empty insp/ directory. Remove: rm -rf /Users/bussss/projects/twenty-playground/pn-mcp",
+    "npx cache for @modelcontextprotocol/inspector@2.9.0 at ~/.npm/_npx/8b9d6ce26068e72c (95 MB, outside the playground). Remove: rm -rf ~/.npm/_npx/8b9d6ce26068e72c",
+    "Reused, not created: API keys pn-admin-key (f2ae6798-e5c6-493d-8e29-39f7fa7a3a7d) and pn-limited-key (3c06c28f-7d26-4254-877b-4722db0883d8), role PN Limited (f557b6ec-72c9-4006-81b4-f7f1c52a3076) and /Users/bussss/projects/twenty-playground/.pn-env, all from the previous test."
+  ],
+  "cleanup": "Removed the empty directory ~/.mcp-inspector/storage (and ~/.mcp-inspector), which Inspector 2.9.0 created even though MCP_CATALOG_PATH and MCP_CLIENT_CONFIG_PATH pointed into the playground. No other removals. No background processes were left running.",
+  "problems": [
+    "A role-restricted key gets no permission error over MCP for objects it cannot use. Twenty returns HTTP 200 with isError true and 'Tool \"x\" not found' plus 'did you mean' suggestions. Field-level denials (filter or orderBy on domainName) do return 'Entity performing the request does not have permission'. Selecting a hidden field is silently dropped with a warning, not an error.",
+    "REST, with the same limited key, returns company.searchVector containing the hidden domainName token (for example 'housecallpro.com'). MCP removes searchVector. So the two APIs do not expose exactly the same data under the same role.",
+    "The read-only PN Limited role's MCP catalog still offers about 100 create, update, upsert and delete tools on system objects (note_targets, attachments, timeline_activities, messages, message_lists...) and create/update/delete_navigation_menu_item. I did not execute these, to avoid mutating shared data. The previous test showed some of these writes succeed.",
+    "learn_tools reports create_one_company as requiring position and tagline, yet a create with only name succeeded (position -2, tagline empty). The schema is stricter than what the server enforces.",
+    "The MCP Inspector CLI (2.9.0) creates ~/.mcp-inspector/storage even when the catalog and client-config paths are overridden. Anyone repeating this should expect that, plus a 95 MB npx cache under ~/.npm/_npx.",
+    "The REST OpenAPI document (/rest/open-api/core) is not role-filtered: both keys get 362 paths including /people, and the Company schema includes domainName. By contrast, MCP's learn_tools and direct mode are role-filtered.",
+    "Other agents share the instance: company counts moved between calls (601, then 602). 'PN Approved Co' (MANUAL, Tim Apple) belongs to another test and was not touched."
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "İlan Listesi": [
+    {
+      "İlan no": "fixture-konut-0001",
+      "Başlık": "Bornova Erzene satılık 3+1 ferah daire",
+      "Açıklama": "Okula ve metroya yakın, site içerisinde bakımlı daire.",
+      "Kategoriler": "Emlak, Konut, Satılık, Daire",
+      "Fiyat": "8.500.000 TL",
+      "Adres": "İzmir / Bornova / Erzene Mah.",
+      "Konum": "38.468, 27.224",
+      "Özellikler": {
+        "m² (Brüt)": "135",
+        "m² (Net)": "110",
+        "Oda Sayısı": "3+1",
+        "Bulunduğu Kat": "Yüksek Giriş",
+        "Kat Sayısı": "5",
+        "Bina Yaşı": "6-10 arası",
+        "Isıtma": "Kombi (Doğalgaz)",
+        "Banyo Sayısı": "2",
+        "Balkon": "Var",
+        "Eşyalı": "false",
+        "Asansör": "Evet",
+        "Otopark": "Evet",
+        "Metro": "Evet",
+        "Deniz Manzarası": null
+      },
+      "Aktif Görsel Listesi": ["aaaa1111.jpg", "bbbb2222.jpg"],
+      "Video Listesi": []
+    },
+    {
+      "İlan no": "fixture-arsa-0002",
+      "Başlık": "Urla satılık imarlı arsa",
+      "Açıklama": "Denize yakın, yolu açılmış imarlı arsa.",
+      "Kategoriler": "Emlak, Arsa, Satılık, İmarlı Arsa",
+      "Fiyat": "12.750.000 TL",
+      "Adres": "İzmir / Urla / Çeşmealtı Mah.",
+      "Konum": "38.362, 26.771",
+      "Özellikler": {
+        "m² (Brüt)": "480",
+        "İmar Durumu": "Konut İmarlı",
+        "Ada No": "128",
+        "Parsel No": "7",
+        "Kaks (Emsal)": "0.30",
+        "Gabari": "6.50",
+        "Elektrik": "Evet",
+        "Su": "Evet",
+        "Yolu Açılmış": "Evet"
+      },
+      "Aktif Görsel Listesi": ["cccc3333.jpg"],
+      "Video Listesi": []
+    },
+    {
+      "İlan no": "fixture-bozuk-0003",
+      "Başlık": "Kategorisiz bozuk kayıt",
+      "Açıklama": "Bu kayıt doğrulamadan geçmemeli.",
+      "Kategoriler": "Emlak, Gizemli Kategori",
+      "Fiyat": "TL",
+      "Adres": "İzmir / Konak",
+      "Konum": "-",
+      "Özellikler": {
+        "Bilinmeyen Harika Özellik": "Evet"
+      },
+      "Aktif Görsel Listesi": [],
+      "Video Listesi": []
+    },
+    {
+      "İlan no": "fixture-konut-0001",
+      "Başlık": "Aynı ilanın kopyası",
+      "Açıklama": "Dosya içi mükerrer kayıt.",
+      "Kategoriler": "Emlak, Konut, Satılık, Daire",
+      "Fiyat": "8.500.000 TL",
+      "Adres": "İzmir / Bornova / Erzene Mah.",
+      "Konum": "38.468, 27.224",
+      "Özellikler": {},
+      "Aktif Görsel Listesi": [],
+      "Video Listesi": []
+    }
+  ]
+}

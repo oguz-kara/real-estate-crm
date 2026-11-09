@@ -70,3 +70,6 @@ screenshots/
 /.diag*.mjs
 /.compare*.mjs
 /.narrow*.mjs
+.superpowers/
+.preview-deploy/
+apps/emlak-app/data/

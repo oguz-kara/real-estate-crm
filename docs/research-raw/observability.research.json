@@ -1,0 +1,714 @@
+{
+  "area": "Observability and cost of AI calls: usage logging, tracing, evaluations (Question 6)",
+  "summary": "Twenty v2.44 records AI activity in three places: Postgres workspace-schema tables (chat threads, turns, messages and parts with tool calls, plus cumulative per-thread token and credit totals, and workflowRun.stepLogs for workflow agent steps), a ClickHouse usageEvent row per call (total tokens, micro-credits, model id, spender), and server console lines with per-step tokens and dollar cost. Gaps that matter for a vertical app: there are no per-turn cost, model or latency columns, the system prompt is never stored, and runAgent and /rest/ai/generate-text persist nothing (runAgent returns only result, error, success). In this local build only the Postgres-backed views work (agent Evals/Logs tabs, workflow run step Logs tab, chat usage popover, Admin Panel chats); usage analytics, the log console and audit logs need ClickHouse and partly an enterprise key, and CLICKHOUSE_URL is unset, so usage events are dropped. There is no OpenTelemetry tracing: AI SDK telemetry with inputs and outputs is consumed only by Sentry when EXCEPTION_HANDLER_DRIVER=SENTRY, and OTel metrics exist behind METER_DRIVER. Cost is provider list price from the model catalog times tokens, with 1 USD = 1,000,000 micro-credits and no markup; with billing disabled nothing is refused by default, app chargeCredits calls get 404, and stored quota limits appear to fail open without ClickHouse (code-read, not tested). Built-in evaluation is manual per-turn LLM grading with a fixed rubric (score 0-100 plus comment in agentTurnEvaluation); the ai-evaluation module is the workflow Classify step on the Jev model, not an eval harness. An app can read turns and trigger grading through metadata GraphQL, but there are no events or webhooks on turns, messages or evaluations, no custom grader, no trace export, and app manifests cannot ship eval inputs, so own evals and per-run cost tracking must be built app-side or need core changes. None of this is documented beyond the credits and usage-limits pages; the two live docs pages compared matched the tag.",
+  "findings": [
+    {
+      "id": "F1",
+      "subQuestion": "Q6a",
+      "claim": "Billed AI paths (chat turn, workflow/agent execution, generate-text, title, classify) emit one usage event: resourceType AI, operationType AI_CHAT_TOKEN or AI_WORKFLOW_TOKEN, creditsUsedMicro, quantity = input+output tokens, resourceContext = model id, spenders userWorkspaceId/agentId. No prompt, token breakdown or latency.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-billing/services/ai-billing.service.ts:233",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:553",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:637",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-generate-text/controllers/ai-generate-text.controller.ts:117",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-evaluation/services/ai-evaluation.service.ts:61"
+      ],
+      "evidenceQuote": "quantity: totalTokens, unit: UsageUnit.TOKEN, resourceId: agentId || null, resourceContext: modelId,",
+      "confidence": "high"
+    },
+    {
+      "id": "F2",
+      "subQuestion": "Q6a",
+      "claim": "Usage events have one store: ClickHouse table usageEvent. UsageRecorderService.record() returns early when no event sink is available; sinks come from env-only EVENT_SINKS (default ['clickhouse']), 'clickhouse' is dropped when CLICKHOUSE_URL is unset, and 'console' only logs JSON rows.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/usage/services/usage-recorder.service.ts:69",
+        "packages/twenty-server/src/engine/core-modules/event-logs/ingest/event-log-ingestion.module.ts:46",
+        "packages/twenty-server/src/engine/core-modules/event-logs/ingest/event-sink-availability.ts:10",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1357",
+        "packages/twenty-server/src/engine/core-modules/event-logs/ingest/console-event.sink.ts:30",
+        "packages/twenty-server/src/engine/core-modules/usage/utils/build-usage-event-envelopes.ts:14"
+      ],
+      "evidenceQuote": "if (!this.eventLogEmitterService.isEnabled() || inputs.length === 0) {",
+      "confidence": "high"
+    },
+    {
+      "id": "F3",
+      "subQuestion": "Q6a",
+      "claim": "AI chat history lives in workspace-schema tables: agentChatThread (cumulative token and credit totals, lastStreamError), agentTurn, agentMessage, agentMessagePart (text, reasoning, toolName, toolInput, toolOutput, errorMessage, providerMetadata). There are no per-turn token, cost, model or latency columns, and the system prompt is not stored.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-history/services/agent-history-workspace-storage.service.ts:19",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/utils/update-agent-chat-thread-usage.util.ts:35",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/utils/mapUIMessagePartsToDBParts.ts:83",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-history/standard-objects/agent-turn.workspace-entity.ts:12",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:464"
+      ],
+      "evidenceQuote": "\"totalInputCredits\" = \"totalInputCredits\" + $5,",
+      "confidence": "high"
+    },
+    {
+      "id": "F4",
+      "subQuestion": "Q6a",
+      "claim": "A workflow AI-agent step writes workflowRun.stepLogs[stepId] (jsonb, dropped above 256 KB): modelId, input/output/reasoning/cache tokens, totalCostInDollars, creditsUsedMicro, web-search count, toolCalls (name, input, output, error, state) and durationMs. Prompt and final answer are not part of the log.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/utils/build-ai-agent-step-log.util.ts:24",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run/workflow-run-step-log.workspace-service.ts:9",
+        "packages/twenty-server/src/modules/workflow/workflow-runner/workflow-run/workflow-run-step-log.workspace-service.ts:57",
+        "packages/twenty-shared/src/workflow/schemas/workflow-run-step-log-schema.ts:19"
+      ],
+      "evidenceQuote": "totalCostInDollars: executionResult.totalCostInDollars ?? 0,",
+      "confidence": "high"
+    },
+    {
+      "id": "F5",
+      "subQuestion": "Q6a",
+      "claim": "runAgent (app SDK and GraphQL) and POST /rest/ai/generate-text write nothing to Postgres. runAgent returns only {result, error, success} and masks failures as 'Agent execution failed.'; generate-text returns text plus inputTokens/outputTokens. Tokens, cost and tool calls of a runAgent call are not returned to the caller.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:147",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:165",
+        "packages/twenty-shared/src/application/runAgentType.ts:19",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-generate-text/controllers/ai-generate-text.controller.ts:108"
+      ],
+      "evidenceQuote": "error: 'Agent execution failed.',",
+      "confidence": "high"
+    },
+    {
+      "id": "F6",
+      "subQuestion": "Q6b",
+      "claim": "The agent Logs tab (agentTurns query) lists only turns whose agentId is set: eval-input runs and workflow agent steps that paused to ask or were resumed. Chat turns are inserted with agentId null and runAgent creates no turn.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/resolvers/agent-turn.resolver.ts:79",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat.service.ts:168",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat.service.ts:556",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts:174"
+      ],
+      "evidenceQuote": "where: { agentId },",
+      "confidence": "high"
+    },
+    {
+      "id": "F7",
+      "subQuestion": "Q6b",
+      "claim": "Usage analytics views read ClickHouse usageEvent: Settings > AI > Usage (UI also requires an Organization key or billing), Settings > Billing > Usage (nav hidden when billing is disabled), Admin Panel > AI usage by workspace. The getUsageAnalytics resolver only checks the WORKSPACE permission.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAiUsageTab.tsx:26",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAiUsageTab.tsx:64",
+        "packages/twenty-front/src/modules/settings/usage/components/SettingsUsageAnalyticsSection.tsx:25",
+        "packages/twenty-front/src/modules/settings/hooks/useSettingsNavigationItems.tsx:145",
+        "packages/twenty-server/src/engine/core-modules/usage/usage.resolver.ts:53",
+        "packages/twenty-front/src/modules/settings/admin-panel/ai/components/SettingsAdminAI.tsx:103"
+      ],
+      "evidenceQuote": "AI usage analytics requires ClickHouse. Contact your administrator.",
+      "confidence": "high"
+    },
+    {
+      "id": "F8",
+      "subQuestion": "Q6b",
+      "claim": "The log console (Record changes, Security, App logs, Webhooks, Page views, Usage) needs feature flag IS_LOGS_SETTINGS_SECTION_ENABLED, Advanced mode and the SECURITY permission. Its eventLogs query throws without ClickHouse, and the Usage source also needs the enterprise AUDIT_LOGS entitlement.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-front/src/modules/log-console/hooks/useIsLogConsoleAllowed.ts:21",
+        "packages/twenty-front/src/modules/log-console/constants/LogConsoleSources.tsx:66",
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.service.ts:176",
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.service.ts:189",
+        "packages/twenty-server/src/engine/core-modules/event-logs/registry/event-log-registry.ts:69"
+      ],
+      "evidenceQuote": "Audit logs require ClickHouse to be configured. Please set the CLICKHOUSE_URL environment variable.",
+      "confidence": "high"
+    },
+    {
+      "id": "F9",
+      "subQuestion": "Q6b",
+      "claim": "Views backed only by Postgres need neither ClickHouse nor an enterprise key: agent Evals/Logs tabs and turn detail (AI_SETTINGS permission), workflow run step Logs tab (model, tokens, cost, tool calls), chat context-usage popover, Admin Panel > AI > Chats (server admin, workspace allowImpersonation).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentFormContent.tsx:135",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/resolvers/agent-turn.resolver.ts:41",
+        "packages/twenty-front/src/modules/side-panel/pages/workflow/step/view-run/components/SidePanelWorkflowRunViewStepContent.tsx:125",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/ai-agent-action/components/WorkflowRunStepLogsAiAgentDetail.tsx:154",
+        "packages/twenty-front/src/modules/ai/components/internal/AiChatContextUsageDetails.tsx:107",
+        "packages/twenty-server/src/engine/core-modules/admin-panel/admin-panel.resolver.ts:699",
+        "packages/twenty-server/src/engine/core-modules/admin-panel/services/admin-panel-chat.service.ts:45"
+      ],
+      "evidenceQuote": "{formatCost(cost.totalCostInDollars)}",
+      "confidence": "high"
+    },
+    {
+      "id": "F10",
+      "subQuestion": "Q6c",
+      "claim": "There is no OpenTelemetry tracing; instrument.ts only creates an OTel MeterProvider. METER_DRIVER (console, opentelemetry, prometheus on 9464; default none) exports AI counters and histograms (tokens, turn/step latency, TTFT, tool duration, outcomes) labelled by model and tool. Chat latency is not stored in Postgres.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/instrument.ts:141",
+        "packages/twenty-server/src/instrument.ts:137",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1248",
+        "packages/twenty-server/src/engine/core-modules/metrics/types/metrics-keys.type.ts:72",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:593"
+      ],
+      "evidenceQuote": "otelMetrics.setGlobalMeterProvider(meterProvider);",
+      "confidence": "high"
+    },
+    {
+      "id": "F11",
+      "subQuestion": "Q6c",
+      "claim": "AI SDK telemetry is enabled on every model call (recordInputs, recordOutputs, functionId, workspace/user/agent/thread/turn ids), but the only consumer in the codebase is Sentry's vercelAIIntegration, initialised only when EXCEPTION_HANDLER_DRIVER=SENTRY; ai.* traces are then sampled at 100%.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/constants/ai-telemetry.const.ts:1",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/utils/build-ai-telemetry.util.ts:31",
+        "packages/twenty-server/src/instrument.ts:61",
+        "packages/twenty-server/src/instrument.ts:95",
+        "packages/twenty-server/src/instrument.ts:103"
+      ],
+      "evidenceQuote": "name.startsWith('ai.') ? 1 : inheritOrSampleWith(tracesSampleRate),",
+      "confidence": "high"
+    },
+    {
+      "id": "F12",
+      "subQuestion": "Q6c",
+      "claim": "With default settings the only per-call record of tokens and cost outside the tables is the server console: AiBillingService logs 'Cost for <model>: $...' with input/cached/cacheCreation/output/reasoning counts per step, and chat logs '[AI_CHAT_TOKENS] step #n'. LOGGER_DRIVER supports CONSOLE only.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-billing/services/ai-billing.service.ts:115",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:705",
+        "packages/twenty-server/src/engine/core-modules/logger/interfaces/logger.interface.ts:5",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1237"
+      ],
+      "evidenceQuote": "`Cost for ${model.modelId}: $${breakdown.totalCostInDollars.toFixed(6)} ` +",
+      "confidence": "high"
+    },
+    {
+      "id": "F13",
+      "subQuestion": "Q6c",
+      "claim": "APPLICATION_LOG_DRIVER is not a config variable at this tag (it survives only in .env.example and the Dockerfile). Logic-function console output is written to the applicationLog event table via EVENT_SINKS and streamed live through the logicFunctionLogs subscription, which needs no ClickHouse.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/.env.example:55",
+        "packages/twenty-docker/twenty/Dockerfile:316",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1357",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service.ts:625",
+        "packages/twenty-server/src/engine/metadata-modules/logic-function/logic-function.resolver.ts:311"
+      ],
+      "evidenceQuote": "# APPLICATION_LOG_DRIVER=CONSOLE",
+      "confidence": "high"
+    },
+    {
+      "id": "F14",
+      "subQuestion": "Q6d",
+      "claim": "Cost = tokens x per-model USD rates from the model catalog (input, output, cached input, cache creation, long-context tier; reasoning at the output rate), plus $0.01 per native web search. Dollars x 1,000,000 = micro-credits; there is no markup.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-billing/utils/compute-cost-breakdown.util.ts:77",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-billing/constants/dollar-to-credit-multiplier.ts:2",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-billing/constants/native-web-search-cost-per-call-dollars.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/ai-providers.json:1045",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-billing/services/ai-billing.service.ts:82"
+      ],
+      "evidenceQuote": "export const DOLLAR_TO_CREDIT_MULTIPLIER = 1_000_000; // 1 / 0.000_001 = 1_000_000 credits per dollar",
+      "confidence": "high"
+    },
+    {
+      "id": "F15",
+      "subQuestion": "Q6d",
+      "claim": "With IS_BILLING_ENABLED=false the AI pre-flight skips the subscription check, there is no credit allowance and the AI quota has no default limits, so only explicit usageLimit rows could refuse a call; app chargeCredits requests get 404 from /app/billing/charge.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/billing/services/billing-usage.service.ts:104",
+        "packages/twenty-server/src/engine/core-modules/billing/services/billing-credit-allowance-provider.service.ts:31",
+        "packages/twenty-server/src/engine/core-modules/usage-limit/constants/usage-limit-definitions.constant.ts:67",
+        "packages/twenty-server/src/engine/core-modules/billing/app-billing/app-billing.controller.ts:118"
+      ],
+      "evidenceQuote": "if (!this.twentyConfigService.get('IS_BILLING_ENABLED')) {",
+      "confidence": "high"
+    },
+    {
+      "id": "F16",
+      "subQuestion": "Q6d",
+      "claim": "Quota limits warm their Redis counters from ClickHouse usageEvent. Without ClickHouse the read throws and UsageLimitQuotaService admits on failure, so a stored AI spend limit would not be enforced on this build. Read from code, not tested.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/usage-limit/services/usage-limit-quota.service.ts:916",
+        "packages/twenty-server/src/engine/core-modules/usage-limit/services/usage-limit-quota.service.ts:512",
+        "packages/twenty-server/src/database/clickhouse/clickhouse.service.ts:218",
+        "packages/twenty-server/src/engine/core-modules/usage/services/usage-analytics.service.ts:95"
+      ],
+      "evidenceQuote": "`Usage quota enforcement degraded for workspace ${workspaceId}: ${error instanceof Error ? error.message : 'unknown error'}`,",
+      "confidence": "medium"
+    },
+    {
+      "id": "F17",
+      "subQuestion": "Q6d",
+      "claim": "Docs: an app charges workspace credits with chargeCredits() (micro-credits, 1 USD = 1,000,000) and can call getCreditAvailability(), which says whether the workspace may spend, never the balance or plan. The page is marked 'Not live yet', launching in October.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/credits",
+        "packages/twenty-docs/developers/extend/apps/logic/credits.mdx:147",
+        "packages/twenty-docs/developers/extend/apps/logic/credits.mdx:8",
+        "packages/twenty-docs/developers/extend/apps/logic/credits.mdx:117"
+      ],
+      "evidenceQuote": "It answers whether the workspace may spend, not how much it has left. Your app does not see the balance or the plan.",
+      "confidence": "high"
+    },
+    {
+      "id": "F18",
+      "subQuestion": "Q6e",
+      "claim": "Turn evaluation (ai-agent-monitor) is manual: evaluateAgentTurn(turnId) or runEvaluationInput(agentId, input) (queue job on aiQueue). A fixed-rubric prompt on the 'fast' default model returns score 0-100 plus comment, stored in workspace table agentTurnEvaluation; without a model a heuristic fallback scores. The grader call is not billed.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/resolvers/agent-turn.resolver.ts:86",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/resolvers/agent-turn.resolver.ts:112",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/jobs/run-evaluation-input.job.ts:81",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/services/agent-turn-grader.service.ts:47",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/services/agent-turn-grader.service.ts:61",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/services/agent-turn-grader.service.ts:166"
+      ],
+      "evidenceQuote": "- A score from 0 to 100 (0 = complete failure, 100 = perfect)",
+      "confidence": "high"
+    },
+    {
+      "id": "F19",
+      "subQuestion": "Q6e",
+      "claim": "ai-evaluation is not an eval harness: it backs the workflow Classify step, sending typed choice/score/boolean questions through the AI SDK's experimental evaluate() to the TypeSafe AI 'Jev' model (needs TYPESAFE_AI_API_KEY), billed as AI_WORKFLOW_TOKEN; answers are returned as the step result.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-evaluation/services/ai-evaluation.service.ts:35",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-evaluation/services/native-evaluation.runner.ts:48",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/classify/classify.workflow-action.ts:54",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/ai-evaluation-models.json:5"
+      ],
+      "evidenceQuote": "'Jev is unavailable. Configure the TypeSafe AI API key and enable Jev before running Classify.',",
+      "confidence": "high"
+    },
+    {
+      "id": "F20",
+      "subQuestion": "Q6e",
+      "claim": "Hooks for own evals are limited to metadata GraphQL (agentTurns, evaluateAgentTurn, runAgent; API keys and app tokens need AI_SETTINGS or AI). History writes skip record events, and agentTurn/agentMessage/agentMessagePart/agentTurnEvaluation have readability SYSTEM, so no webhooks, triggers or record-API reads; only agentChatThread emits events.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/resolvers/agent-turn.resolver.ts:29",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-history/repositories/agent-history-repository.ts:53",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat-thread-record-event.service.ts:20",
+        "packages/twenty-server/src/engine/core-modules/record-share/utils/resolve-record-share-gate-kind.util.ts:18",
+        "packages/twenty-server/src/database/commands/agent-history/utils/get-agent-history-schema-additions.util.ts:69"
+      ],
+      "evidenceQuote": "// Chat history writes skip record events, so record subscribers only hear of",
+      "confidence": "high"
+    },
+    {
+      "id": "F21",
+      "subQuestion": "Q6e",
+      "claim": "An app manifest cannot ship eval inputs: AgentManifest has no such field and synced agents get evaluationInputs: []. The Evals tab is disabled in the UI for agents owned by an installed application; evaluationInputs is a text[] column on core.agent.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/application/utils/from-agent-manifest-to-universal-flat-agent.util.ts:29",
+        "packages/twenty-shared/src/application/agentManifestType.ts:4",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentFormContent.tsx:65",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentFormContent.tsx:166",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/entities/agent.entity.ts:72"
+      ],
+      "evidenceQuote": "evaluationInputs: [],",
+      "confidence": "high"
+    },
+    {
+      "id": "F22",
+      "subQuestion": "Q6f",
+      "claim": "Locally only Postgres stores exist: both workspace schemas hold agentChatThread/agentTurn/agentMessage/agentMessagePart seed rows (token totals 0), agentTurnEvaluation and workflowRun.stepLogs are empty, legacy core.agentChatThread/agentTurn/agentMessage* tables have 0 rows, and /client-config reports isClickHouseConfigured=false, so no usageEvent store exists.",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT table_schema, table_name, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', table_schema, table_name), false, true, '')))[1]::text::int AS row_count FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_name IN ('agent','agentChatThread','agentChatThreadTarget','agentTurn','agentMessage','agentMessagePart','agentTurnEvaluation','usageLimit','usageEvent','applicationLog','workflowRun') ORDER BY 1,2;\"",
+        "curl -s -m 10 http://localhost:3000/client-config | python3 -c \"import json,sys; d=json.load(sys.stdin); print({k: d.get(k) for k in ['isClickHouseConfigured','analyticsEnabled']}, 'isBillingEnabled=', d['billing']['isBillingEnabled'], 'sentryDsnSet=', bool(d['sentry'].get('dsn')), 'aiModels=', len(d['aiModels']))\"",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT 'apple', count(*) AS threads, count(*) FILTER (WHERE \\\"totalInputTokens\\\" > 0) AS threads_with_tokens FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentChatThread\\\" UNION ALL SELECT 'ycombinator', count(*), count(*) FILTER (WHERE \\\"totalInputTokens\\\" > 0) FROM \\\"workspace_3ixj3i1a5avy16ptijtb3lae3\\\".\\\"agentChatThread\\\";\"",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT 'apple', count(*) AS runs, count(*) FILTER (WHERE \\\"stepLogs\\\" IS NOT NULL AND \\\"stepLogs\\\"::text NOT IN ('{}','null')) AS runs_with_steplogs FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"workflowRun\\\" UNION ALL SELECT 'ycombinator', count(*), count(*) FILTER (WHERE \\\"stepLogs\\\" IS NOT NULL AND \\\"stepLogs\\\"::text NOT IN ('{}','null')) FROM \\\"workspace_3ixj3i1a5avy16ptijtb3lae3\\\".\\\"workflowRun\\\";\"",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT o.\\\"nameSingular\\\", o.readability, o.writability FROM core.\\\"objectMetadata\\\" o JOIN core.workspace w ON w.id=o.\\\"workspaceId\\\" WHERE w.\\\"displayName\\\"='Apple' AND o.\\\"nameSingular\\\" ILIKE 'agent%' ORDER BY 1;\""
+      ],
+      "evidenceQuote": "workspace_1wgvd1injqtife6y4rvfbu3h5|agentMessagePart|66 ... core|agentTurnEvaluation|0 ... {'isClickHouseConfigured': False, 'analyticsEnabled': False} isBillingEnabled= False",
+      "confidence": "high"
+    }
+  ],
+  "docsVsSource": [
+    {
+      "topic": "Where the usage and cost breakdown is visible",
+      "docsSay": "\"You can see the per-action breakdown — including which model was used — in Settings → Billing.\" No mention of ClickHouse or self-hosting (same text on the live site).",
+      "sourceSays": "Breakdowns come from the getUsageAnalytics query over ClickHouse usageEvent. The Billing nav item is hidden when IS_BILLING_ENABLED=false; the AI breakdown is under Settings > AI > Usage and is gated in the UI by an Organization key or billing; both pages show 'ClickHouse Not Configured' when CLICKHOUSE_URL is unset.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/billing/capabilities/credits",
+        "packages/twenty-docs/user-guide/billing/capabilities/credits.mdx:48",
+        "packages/twenty-front/src/modules/settings/hooks/useSettingsNavigationItems.tsx:145",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAiUsageTab.tsx:37",
+        "packages/twenty-front/src/modules/settings/usage/components/SettingsUsageAnalyticsSection.tsx:25",
+        "packages/twenty-server/src/engine/core-modules/usage/usage.resolver.ts:100"
+      ]
+    },
+    {
+      "topic": "App credit charging on a billing-disabled (community) instance",
+      "docsSay": "\"Charging never fails your function. A billing error is logged and swallowed, and the call no-ops outside the logic function runtime\". Nothing is said about self-hosted or billing-disabled instances.",
+      "sourceSays": "POST /app/billing/charge throws NotFoundException when IS_BILLING_ENABLED is false, so no usage row is written and the SDK only console.errors the 404. GET /app/billing/credits then always answers hasAvailableCredits: true, because there is no subscription check and no allowance.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/credits",
+        "packages/twenty-docs/developers/extend/apps/logic/credits.mdx:125",
+        "packages/twenty-server/src/engine/core-modules/billing/app-billing/app-billing.controller.ts:116",
+        "packages/twenty-sdk/src/sdk/billing/charge-credits.ts:75",
+        "packages/twenty-server/src/engine/core-modules/billing/services/billing-usage.service.ts:104",
+        "packages/twenty-server/src/engine/core-modules/billing/services/billing-usage.service.ts:140"
+      ]
+    },
+    {
+      "topic": "Observability configuration variables",
+      "docsSay": "The self-host setup page documents no ClickHouse, EVENT_SINKS, METER_DRIVER or Sentry settings (it defers to the admin panel and config-variables.ts). packages/twenty-server/.env.example and the Dockerfile still list APPLICATION_LOG_DRIVER=CONSOLE.",
+      "sourceSays": "config-variables.ts defines no APPLICATION_LOG_DRIVER. Usage events and application logs are routed by env-only EVENT_SINKS (default ['clickhouse']; known sinks clickhouse and console), metrics by METER_DRIVER, and the OTLP endpoint is read straight from process.env.OTLP_COLLECTOR_METRICS_ENDPOINT_URL in instrument.ts.",
+      "refs": [
+        "https://docs.twenty.com/developers/self-host/capabilities/setup",
+        "packages/twenty-docs/developers/self-host/capabilities/setup.mdx:44",
+        "packages/twenty-server/.env.example:55",
+        "packages/twenty-docker/twenty/Dockerfile:316",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1357",
+        "packages/twenty-server/src/engine/core-modules/event-logs/ingest/event-sink-availability.ts:1",
+        "packages/twenty-server/src/instrument.ts:159"
+      ]
+    },
+    {
+      "topic": "Usage limits on a self-hosted instance",
+      "docsSay": "The whole workspace can be capped on \"Any plan\", and \"The limit applies immediately and counts the usage already recorded in the current period.\"",
+      "sourceSays": "Workspace-scoped limits are accepted without entitlement, but cold counters are warmed from ClickHouse usageEvent; with no ClickHouse client selectOrThrow throws and enforcement admits on failure. Member, API key and app scopes need the USAGE_LIMIT entitlement, which requires a valid enterprise key. Code-read only, not tested.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/billing/capabilities/usage-limits",
+        "packages/twenty-docs/user-guide/billing/capabilities/usage-limits.mdx:38",
+        "packages/twenty-docs/user-guide/billing/capabilities/usage-limits.mdx:51",
+        "packages/twenty-server/src/engine/core-modules/usage-limit/services/usage-limit-quota.service.ts:512",
+        "packages/twenty-server/src/engine/core-modules/usage-limit/services/usage-limit-quota.service.ts:916",
+        "packages/twenty-server/src/database/clickhouse/clickhouse.service.ts:218",
+        "packages/twenty-server/src/engine/core-modules/usage-limit/services/usage-limit.service.ts:219",
+        "packages/twenty-server/src/engine/core-modules/billing/utils/is-entitlement-active.util.ts:11"
+      ]
+    },
+    {
+      "topic": "Workflow run details for AI agent steps",
+      "docsSay": "Run details list Status, Started at, Duration, Trigger data, Step outputs and Error messages. There is no mention of a Logs tab or of tokens and cost.",
+      "sourceSays": "Each run step has Output, Node, Input and Logs tabs; for AI agent steps the Logs tab shows model, tokens, cost in dollars, tool calls, web searches and duration from workflowRun.stepLogs.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-runs",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-runs.mdx:33",
+        "packages/twenty-front/src/modules/side-panel/pages/workflow/step/view-run/components/SidePanelWorkflowRunViewStepContent.tsx:125",
+        "packages/twenty-front/src/modules/workflow/workflow-steps/workflow-actions/ai-agent-action/components/WorkflowRunStepLogsAiAgentDetail.tsx:138"
+      ]
+    },
+    {
+      "topic": "Agent evals and turn monitoring",
+      "docsSay": "Not documented. The user-guide/ai pages and developers/extend/apps/logic/skills-and-agents mention no Evals or Logs tabs, turn evaluation or evaluation inputs (defineAgent options listed: name, label, prompt, description, icon, modelId, responseFormat, roleUniversalIdentifier).",
+      "sourceSays": "Agent settings have Evals and Logs tabs backed by runEvaluationInput, agentTurns and evaluateAgentTurn. evaluationInputs is stored on core.agent but cannot be set from an app manifest.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:60",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentFormContent.tsx:135",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/resolvers/agent-turn.resolver.ts:74",
+        "packages/twenty-server/src/engine/core-modules/application/utils/from-agent-manifest-to-universal-flat-agent.util.ts:29"
+      ]
+    },
+    {
+      "topic": "Live docs site versus repo docs at tag v2.44.0",
+      "docsSay": "Live pages /developers/extend/apps/logic/credits and /user-guide/billing/capabilities/credits (fetched 2026-10-03) carry the same 'Not live yet' warning, micro-credit unit, operationType list and AI metering text.",
+      "sourceSays": "The repo docs at the tag are identical on those points; no drift was found on the two pages compared. Other pages were not compared with the live site.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/credits",
+        "packages/twenty-docs/developers/extend/apps/logic/credits.mdx:7",
+        "https://docs.twenty.com/user-guide/billing/capabilities/credits",
+        "packages/twenty-docs/user-guide/billing/capabilities/credits.mdx:10"
+      ]
+    }
+  ],
+  "unclear": [
+    {
+      "topic": "What Sentry actually receives for AI calls (prompts, outputs, tool calls)",
+      "why": "instrument.ts configures vercelAIIntegration with recordInputs/recordOutputs and each call sets telemetry options, but no Sentry DSN is configured locally (/client-config sentry.dsn is empty), so span content was not observed. No other telemetry consumer exists in the source (grep for registerTelemetry found nothing)."
+    },
+    {
+      "topic": "Whether app database-event triggers or webhooks receive agentChatThread.* events",
+      "why": "AgentChatThreadRecordEventService emits created/updated/destroyed batch events, and CallWebhookJobsJob only lets out rows readable by everyone, while agentChatThread readability is INHERITED locally. Trigger eligibility for system objects was not traced and nothing was tested end to end."
+    },
+    {
+      "topic": "API key and application token access to agentTurns, evaluateAgentTurn, getUsageAnalytics and eventLogs",
+      "why": "The guards declare apiKey: true and application: true plus a settings permission flag (AI_SETTINGS, WORKSPACE, SECURITY), and SettingsPermissionGuard passes apiKeyId and applicationId. It was not exercised because this phase could not use credentials."
+    },
+    {
+      "topic": "All ClickHouse-dependent behaviour (usageEvent rows, usage pages, log console, quota warm-up and fail-open)",
+      "why": "CLICKHOUSE_URL is unset and /client-config reports isClickHouseConfigured=false, so these claims come from reading code only. LOCAL-SETUP.md notes about 9 GB free disk and 8 GB RAM, so adding a ClickHouse container may not be practical on this machine."
+    },
+    {
+      "topic": "Effective runtime environment of the running server (EVENT_SINKS, METER_DRIVER, LOG_LEVELS, EXCEPTION_HANDLER_DRIVER)",
+      "why": "Only the variable names in packages/twenty-server/.env (all of these are commented out) and the public /client-config were checked. The process environment and server stdout were not inspected, so defaults are assumed."
+    },
+    {
+      "topic": "Retention of AI chat history and workflow step logs in Postgres",
+      "why": "A grep over cron, cleanup and retention files found no job referencing agentChatThread or agentMessage. Only ClickHouse event logs have a retention (workspace.eventLogRetentionDays, 90 locally, plus table TTLs). Soft-delete and trash retention for these system objects was not traced."
+    },
+    {
+      "topic": "Docs claim 'Auditability: Track which actions were performed by which agent'",
+      "why": "permissions-access-control.mdx:26 states it without naming a mechanism. In this area only agentId on usage events, turns and messages was found; actor attribution on records written by agents belongs to the permissions and approval areas and was not verified here."
+    },
+    {
+      "topic": "Whether the record API exposes agentChatThread usage totals to API keys and apps",
+      "why": "Local object metadata shows agentChatThread readability INHERITED and writability OPEN, and the frontend reads the total* fields through the record API, but the /graphql workspace schema needs authentication and was not introspected."
+    }
+  ],
+  "unstable": [
+    {
+      "item": "ai-evaluation (Classify step) depends on the AI SDK's experimental evaluation API",
+      "evidence": "import { experimental_evaluate as evaluate } from 'ai'; types aliased from Experimental_EvaluationModel / Experimental_EvaluationQuestion, with a comment that the SDK prefix is used 'while the API is experimental'.",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-evaluation/services/native-evaluation.runner.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/types/ai-evaluation-model.type.ts:2"
+      ]
+    },
+    {
+      "item": "App credit charging (billing block in the manifest, chargeCredits, getCreditAvailability)",
+      "evidence": "Docs warning: 'Not live yet. Credit charging for apps launches officially in October. This page is published early for partners who want to experiment with it.' Same warning on the live site on 2026-10-03.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/credits",
+        "packages/twenty-docs/developers/extend/apps/logic/credits.mdx:7"
+      ]
+    },
+    {
+      "item": "Agent chat history storage model changed in 2.44 (core tables moved to workspace-schema standard objects)",
+      "evidence": "'Shipped upgrade commands keep this import while live chat uses workspace storage.' Legacy core.agentChatThread/agentTurn/agentMessage/agentMessagePart/agentTurnEvaluation tables still exist locally with 0 rows; readiness is tracked by keyValuePair key agent-history-storage-v1; several 2-44 upgrade commands touch chat threads.",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-history/services/agent-history-storage.service.ts:1",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-history/services/agent-history-workspace-storage.service.ts:17",
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-44/2-44-workspace-command-1790751626421-move-agent-chat-threads-to-record-model.command.ts:1",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/entities/agent-turn-evaluation.entity.ts:15"
+      ]
+    },
+    {
+      "item": "Log console is behind feature flag IS_LOGS_SETTINGS_SECTION_ENABLED",
+      "evidence": "Seeded true for dev workspaces but absent from DEFAULT_FEATURE_FLAGS for new workspaces; admin label 'Logs console: Show a logs console at the bottom of the app in Advanced mode.'",
+      "refs": [
+        "packages/twenty-front/src/modules/log-console/hooks/useIsLogConsoleAllowed.ts:12",
+        "packages/twenty-server/src/engine/workspace-manager/dev-seeder/core/utils/seed-feature-flags.util.ts:14",
+        "packages/twenty-server/src/engine/workspace-manager/workspace-migration/constant/default-feature-flags.ts:3"
+      ]
+    },
+    {
+      "item": "Execution quotas for workflow nodes and logic functions are behind IS_EXECUTION_QUOTA_ENABLED",
+      "evidence": "Admin flag description: 'Enforce usage quotas on workflow node runs and logic function executions.'",
+      "refs": [
+        "packages/twenty-front/src/modules/settings/admin-panel/constants/SettingsAdminFeatureFlagMetadata.ts:57",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workspace-services/workflow-executor.workspace-service.ts:392"
+      ]
+    },
+    {
+      "item": "runAgent resolver has no input validation pipe yet",
+      "evidence": "'TODO(@abdulrahmancodes): install ResolverValidationPipe here; without it every class-validator decorator on RunAgentInputDTO is inert.'",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/resolvers/agent-run.resolver.ts:43"
+      ]
+    },
+    {
+      "item": "Stale APPLICATION_LOG_DRIVER in .env.example and Dockerfile; its replacement EVENT_SINKS is undocumented",
+      "evidence": "'# APPLICATION_LOG_DRIVER=CONSOLE' remains in .env.example and 'APPLICATION_LOG_DRIVER=CONSOLE' in the Dockerfile, while config-variables.ts only defines EVENT_SINKS; no docs page mentions EVENT_SINKS.",
+      "refs": [
+        "packages/twenty-server/.env.example:55",
+        "packages/twenty-docker/twenty/Dockerfile:316",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1350"
+      ]
+    },
+    {
+      "item": "Usage, event-log registry and billing code carries an Enterprise licence header",
+      "evidence": "Files start with '/* @license Enterprise */' (usage recorder, usage resolver, event-log registry, billing usage, app billing). Recording itself is not gated by an enterprise key at runtime, viewing partly is.",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/usage/services/usage-recorder.service.ts:1",
+        "packages/twenty-server/src/engine/core-modules/usage/usage.resolver.ts:1",
+        "packages/twenty-server/src/engine/core-modules/event-logs/registry/event-log-registry.ts:1"
+      ]
+    },
+    {
+      "item": "Evals tab enablement differs between development and production builds",
+      "evidence": "'process.env.NODE_ENV === 'development' ? isReadonlyMode : isFormDisabled;' so in production the tab is also disabled for non-custom (standard) agents.",
+      "refs": [
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentFormContent.tsx:166"
+      ]
+    },
+    {
+      "item": "Heuristic fallback grader counts any text part, including the user's message, as a response",
+      "evidence": "'const hasResponse = parts.some((p) => p.textContent);' is computed over all messages of the turn, so a turn with only a user message scores 100 'Completed'.",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-monitor/services/agent-turn-grader.service.ts:174"
+      ]
+    },
+    {
+      "item": "Event log filtering inconsistency flagged by a TODO",
+      "evidence": "'TODO: non-usage tables filter by userId (some actions are logged out) while usageEvent uses userWorkspaceId; migrate all to userWorkspaceId for consistency.'",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.service.ts:222"
+      ]
+    },
+    {
+      "item": "Chat-related feature flags still in flux",
+      "evidence": "IS_CONVERSATIONS_TAB_ENABLED and IS_AI_CHAT_SHARING_DROPDOWN_ENABLED exist as flags (both false in the seeded workspaces); a 2-44 command gates the Conversations widget on the flag.",
+      "refs": [
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:12",
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:19",
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-44/2-44-workspace-command-1790700866168-gate-conversations-widget-on-feature-flag.command.ts:15"
+      ]
+    }
+  ],
+  "localTestPlan": [
+    {
+      "goal": "Baseline: confirm which observability backends are configured on the running instance",
+      "steps": [
+        "Run: curl -s -m 10 http://localhost:3000/client-config | python3 -c \"import json,sys; d=json.load(sys.stdin); print({k: d.get(k) for k in ['isClickHouseConfigured','analyticsEnabled']}, 'isBillingEnabled=', d['billing']['isBillingEnabled'], 'sentryDsnSet=', bool(d['sentry'].get('dsn')), 'aiModels=', len(d['aiModels']))\"",
+        "List uncommented variable NAMES only: grep -v '^\\s*#' /Users/bussss/projects/twenty/packages/twenty-server/.env | grep '=' | cut -d= -f1 | sort",
+        "Check that EVENT_SINKS, CLICKHOUSE_URL, METER_DRIVER and EXCEPTION_HANDLER_DRIVER are not among the names"
+      ],
+      "expected": "isClickHouseConfigured False, analyticsEnabled False, isBillingEnabled False, sentryDsnSet False, aiModels 0 (becomes > 0 once an LLM key is configured). None of the four variables is set, so usage events are dropped, no metrics are exported and no AI traces are captured.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Inventory AI and usage tables with row counts",
+      "steps": [
+        "Run: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT table_schema, table_name, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', table_schema, table_name), false, true, '')))[1]::text::int AS row_count FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_name IN ('agent','agentChatThread','agentChatThreadTarget','agentTurn','agentMessage','agentMessagePart','agentTurnEvaluation','usageLimit','usageEvent','applicationLog','workflowRun') ORDER BY 1,2;\"",
+        "Run: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT o.\\\"nameSingular\\\", o.readability, o.writability FROM core.\\\"objectMetadata\\\" o JOIN core.workspace w ON w.id=o.\\\"workspaceId\\\" WHERE w.\\\"displayName\\\"='Apple' AND o.\\\"nameSingular\\\" ILIKE 'agent%' ORDER BY 1;\""
+      ],
+      "expected": "Workspace schemas workspace_1wgvd1injqtife6y4rvfbu3h5 (Apple) and workspace_3ixj3i1a5avy16ptijtb3lae3 (YCombinator) contain agentChatThread, agentTurn, agentMessage, agentMessagePart, agentTurnEvaluation (0 rows) and workflowRun; core legacy agent history tables have 0 rows; core.usageLimit 0; no usageEvent or applicationLog table in Postgres. agentChatThread is INHERITED/OPEN, the other history objects SYSTEM/SYSTEM.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Confirm the observability GraphQL surface exists (no credentials needed)",
+      "steps": [
+        "Run: curl -s -m 20 -X POST http://localhost:3000/metadata -H 'Content-Type: application/json' -d '{\"query\":\"{ __schema { queryType { fields { name } } mutationType { fields { name } } subscriptionType { fields { name } } } }\"}' and search the output for agentTurns, getUsageAnalytics, eventLogs, aiChatUsage, evaluateAgentTurn, runEvaluationInput, runAgent, logicFunctionLogs, eventLogsLive",
+        "Repeat against http://localhost:3000/admin-panel and search for getAdminAiUsageByWorkspace, getAdminChatThreads, getAdminChatThreadMessages"
+      ],
+      "expected": "All listed operations are present. RunAgentResult has only result, error, success; AgentTurn has id, threadId, agentId, evaluations, messages, createdAt; AgentTurnEvaluation has id, turnId, score, comment, createdAt.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "ClickHouse-gated reads fail or come back empty on this build",
+      "steps": [
+        "Obtain a user access token for the demo user in that phase (UI login, or metadata mutations getLoginTokenFromCredentials then getAuthTokensFromLoginToken) and export it as TOKEN",
+        "POST http://localhost:3000/metadata with header 'Authorization: Bearer $TOKEN' and GraphQL: query { eventLogs(input: { table: USAGE_EVENT, first: 5 }) { totalCount records { event timestamp properties } } }",
+        "Same endpoint: query { getUsageAnalytics(input: { operationTypes: [AI_CHAT_TOKEN, AI_WORKFLOW_TOKEN] }) { usageByModel { key creditsUsed } usageByOperationType { key creditsUsed } timeSeries { date creditsUsed } } }",
+        "Optional UI check: http://localhost:3002/settings/ai then the Usage tab, and http://localhost:3002/settings/billing/usage"
+      ],
+      "expected": "eventLogs returns an error with message 'Audit logs require ClickHouse to be configured. Please set the CLICKHOUSE_URL environment variable.' getUsageAnalytics returns empty arrays. UI: the AI Usage tab shows the 'Organization feature' gate card; the billing usage page shows 'ClickHouse Not Configured'.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "runAgent leaves no database trace and masks errors",
+      "steps": [
+        "Record counts before: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT (SELECT count(*) FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentTurn\\\"), (SELECT count(*) FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentMessage\\\"), (SELECT count(*) FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentChatThread\\\");\"",
+        "Get the standard agent identifier: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT a.\\\"universalIdentifier\\\" FROM core.agent a JOIN core.workspace w ON w.id=a.\\\"workspaceId\\\" WHERE w.\\\"displayName\\\"='Apple' AND a.name='helper';\"",
+        "POST http://localhost:3000/metadata with 'Authorization: Bearer $TOKEN' and GraphQL: mutation { runAgent(input: { agentUniversalIdentifier: \"<UID>\", prompt: \"PN runAgent probe: reply with the single word ok\" }) { result error success } }",
+        "Re-run the count query and compare; look at the terminal running 'npx nx start' for the error stack or the 'Cost for' line"
+      ],
+      "expected": "Without an LLM key: { result: null, error: 'Agent execution failed.', success: false } and the real cause appears only in the server log. With a key: success true and a 'Cost for <model>: $...' log line. In both cases the three counts are unchanged, proving runAgent is not recorded as a turn or thread.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Turn evaluation flow (Evals and Logs tabs), including the heuristic fallback without a model",
+      "steps": [
+        "Create a custom agent: POST /metadata with $TOKEN: mutation { createOneAgent(input: { label: \"PN Eval Agent\", name: \"pn-eval-agent\", prompt: \"Answer in one short sentence.\", modelId: \"workspace-default-model\", evaluationInputs: [\"PN eval: say hello\"] }) { id } } (or UI: Settings > AI > new agent)",
+        "Run an eval input (user session token required, API keys are rejected): mutation { runEvaluationInput(agentId: \"<AGENT_ID>\", input: \"PN eval: say hello\") { id threadId agentId } }",
+        "Wait about 10 seconds (the worker started by 'npx nx start' must be running), then: mutation { evaluateAgentTurn(turnId: \"<TURN_ID>\") { id score comment createdAt } }",
+        "Read back: query { agentTurns(agentId: \"<AGENT_ID>\") { id createdAt evaluations { score comment } messages { role parts { type textContent toolName errorMessage } } } }",
+        "UI check: Settings > AI > open 'PN Eval Agent' > Logs tab, then the chevron to the Turn Details page",
+        "SQL: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT count(*) FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentTurnEvaluation\\\";\" and docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT id, title FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentChatThread\\\" WHERE title LIKE 'Eval: PN %';\"",
+        "Cleanup: mutation { deleteOneAgent(input: { id: \"<AGENT_ID>\" }) { id } }. The eval thread is titled by the server as 'Eval: PN eval: say hello...' (not PN-prefixed) and must be removed separately using the id from the SQL above"
+      ],
+      "expected": "Without an LLM key the agent run fails in the worker (no assistant message), yet evaluateAgentTurn returns a heuristic evaluation: score 100 'Completed' if the user message was stored, or 50 'No response' if the turn has no messages. agentTurnEvaluation count goes from 0 to 1 and the turn appears in the Logs tab with a score chip. With a key, an assistant message is stored and an LLM score (0-100) with a comment appears automatically after the run.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Chat turn: persisted history, per-thread totals and console cost lines",
+      "steps": [
+        "Open http://localhost:3002, open the AI chat and send: PN chat probe: how many companies do we have?",
+        "Watch the terminal running 'npx nx start' for lines containing '[AI_CHAT_TOKENS] step #' and 'Cost for'",
+        "SQL totals: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT t.id, t.\\\"totalInputTokens\\\", t.\\\"totalOutputTokens\\\", t.\\\"totalInputCredits\\\", t.\\\"totalOutputCredits\\\", t.\\\"totalCacheReadTokens\\\" FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentChatThread\\\" t WHERE t.id IN (SELECT m.\\\"threadId\\\" FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentMessage\\\" m JOIN \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentMessagePart\\\" p ON p.\\\"messageId\\\"=m.id WHERE p.\\\"textContent\\\" LIKE 'PN chat probe%');\"",
+        "SQL parts: list type, toolName and state of agentMessagePart rows for that thread, and check agentTurn.agentId for its turn",
+        "In the chat input, open the context-usage indicator to see conversation tokens and credits"
+      ],
+      "expected": "Thread totals are greater than 0 and the credit columns hold micro-credits (dollars x 1,000,000). Parts include tool-* rows with toolInput and toolOutput. The turn has agentId NULL, so it does not show in any agent's Logs tab. No table holds per-turn tokens or the system prompt. The thread title is model-generated, so find the artefact by the message text prefix 'PN chat probe'.",
+      "needsLlmKey": true,
+      "needsBrowser": true,
+      "mutatesData": true
+    },
+    {
+      "goal": "Workflow AI-agent step log (tokens, cost, tool calls, duration)",
+      "steps": [
+        "Record: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT count(*) FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"agentTurn\\\";\"",
+        "UI: Workflows > new workflow named 'PN agent step log' > manual trigger > add an AI Agent action with prompt 'Reply with the single word ok.' > activate and run it",
+        "Open the run, click the AI Agent step and open the Logs tab",
+        "SQL: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT r.name, k AS step_id, r.\\\"stepLogs\\\"->k->'details'->>'modelId', r.\\\"stepLogs\\\"->k->'details'->'usage', r.\\\"stepLogs\\\"->k->'details'->'cost' FROM \\\"workspace_1wgvd1injqtife6y4rvfbu3h5\\\".\\\"workflowRun\\\" r, jsonb_object_keys(r.\\\"stepLogs\\\") k WHERE r.name LIKE '%PN agent step log%';\"",
+        "Re-run the agentTurn count"
+      ],
+      "expected": "The Logs tab shows a model badge, Tokens, Cost in dollars, Tool calls and Duration. SQL shows a step log with modelId, usage.totalTokens > 0 and cost.creditsUsedMicro > 0. The agentTurn count is unchanged because a conversation is only recorded when the step pauses to ask.",
+      "needsLlmKey": true,
+      "needsBrowser": true,
+      "mutatesData": true
+    },
+    {
+      "goal": "See usage events and AI metrics without ClickHouse through the console sinks (optional, needs a server restart)",
+      "steps": [
+        "Stop the stack and restart it with shell-only environment variables (no file edits): EVENT_SINKS=console METER_DRIVER=console npx nx start",
+        "Repeat the chat probe or the runAgent probe with an LLM key configured",
+        "Search the server terminal for a log line with context 'usageEvent' and for metric names such as ai-chat/input-tokens and ai-chat/turn-latency-ms",
+        "Stop the stack and start it again without the two variables"
+      ],
+      "expected": "A JSON log line with resourceType AI, operationType AI_CHAT_TOKEN (or AI_WORKFLOW_TOKEN), unit TOKEN, quantity, creditsUsedMicro and resourceContext equal to the model id. About every 30 seconds a metrics dump that includes the ai-chat counters and histograms. Expect extra noise because record-change events also go to the console sink. Predicted from source, not yet observed.",
+      "needsLlmKey": true,
+      "needsBrowser": true,
+      "mutatesData": true
+    },
+    {
+      "goal": "Check what the record API exposes for AI history objects",
+      "steps": [
+        "POST http://localhost:3000/graphql with 'Authorization: Bearer $TOKEN' and GraphQL: query { agentChatThreads(first: 1) { edges { node { id title totalInputTokens totalOutputTokens totalInputCredits totalOutputCredits } } } }",
+        "Same endpoint: query { agentMessages(first: 1) { edges { node { id role } } } }",
+        "Same endpoint: query { agentTurnEvaluations(first: 1) { edges { node { id score } } } }",
+        "Repeat the three queries with an API key token bound to a limited role"
+      ],
+      "expected": "Threads are readable (the caller's visible threads) with their usage totals. agentMessages and agentTurnEvaluations should be refused or empty, because readability SYSTEM resolves to a 'denied' row policy for non-system callers. Record what actually happens (field missing, error or empty list); this is predicted from source only.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "App credits on a billing-disabled instance (depends on the hello-world app from the app-platform area)",
+      "steps": [
+        "In the playground app under /Users/bussss/projects/twenty-playground add a logic function named pn-credits-probe that logs JSON.stringify(await getCreditAvailability()) and then calls await chargeCredits({ operationType: 'CODE_EXECUTION', creditsUsedMicro: 1, quantity: 1 }), both imported from 'twenty-sdk/billing'",
+        "Sync the app and execute the function with the CLI commands documented in developers/extend/apps/operations/cli.mdx (yarn twenty dev:function:exec), while streaming logs with: yarn twenty dev:function:logs -n pn-credits-probe"
+      ],
+      "expected": "The log shows {\"hasAvailableCredits\":true} and a line starting 'chargeCredits: 404', and the function itself does not fail. No usage row is written anywhere.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Check whether a workspace AI quota is enforced without ClickHouse (optional)",
+      "steps": [
+        "Create a limit: POST /metadata with $TOKEN: mutation { createUsageLimit(input: { resourceType: AI, operationType: AI_CHAT_TOKEN, spenderType: \"workspace\", limitKind: \"quota\", periodCount: 1, periodUnit: \"day\", meter: \"quantity\", limitValue: 1 }) { id } } and save the returned id to /Users/bussss/projects/twenty-playground/pn-usage-limit-id.txt (limits have no name to prefix)",
+        "Send two chat messages starting with 'PN quota probe'",
+        "Search the server terminal for 'Usage quota enforcement degraded for workspace'",
+        "Cleanup: mutation { deleteUsageLimit(usageLimitId: \"<ID>\") }"
+      ],
+      "expected": "Predicted from source: both messages are answered and the server logs 'Usage quota enforcement degraded for workspace ...', because counters cannot be warmed without ClickHouse and enforcement admits on failure. If the second message is refused instead, the fail-open reading of the code is wrong and the note must say so.",
+      "needsLlmKey": true,
+      "needsBrowser": true,
+      "mutatesData": true
+    }
+  ]
+}

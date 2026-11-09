@@ -1,0 +1,691 @@
+{
+  "area": "MCP server in the self-hosted build (Question 5)",
+  "summary": "Yes. The self-hosted build always serves an MCP server at POST /mcp (stateless streamable HTTP, protocol 2025-06-18, serverInfo 'Twenty MCP Server' 0.1.0) with no feature flag, env variable or plan gate; on the local instance an unauthenticated call returns 401 plus a WWW-Authenticate header, and the server card and OAuth metadata are published under /.well-known. Accepted credentials are a workspace API key as bearer token (created in Settings → MCP & APIs → API, or createApiKey + generateApiKeyToken on /metadata, role mandatory), a user access token, or an OAuth 2.1 token obtained through dynamic client registration with PKCE; tokens carrying neither a user nor an API key cannot resolve a role. In the default mode tools/list is the same seven tools for everyone (search_help_center, get_tool_catalog, learn_tools, execute_tool, load_skills, list_skills, list_object_metadata_names); the real catalog behind them is built per caller from the role, ?mode=direct lists it flat, app logic functions appear as app_* tools, four internal tools are excluded, and no resources or prompts exist. Reads and writes run through the same Common query runners and permission-checked ORM repository as GraphQL and REST, using the API key's role or the user's role (intersected with an application's default role), so object and field permissions are enforced by shared code; a forbidden object shows up as 'tool not found', and MCP is narrower than the UI (no system or workflow objects, soft delete only). Docs, identical on the live site on 2026-10-03, match the endpoint, auth options and tool names but disagree with source on DCR client secrets, the /oauth/authorize path, the in-app config snippet and the API-key creation flow. Nothing was exercised with credentials in this phase: enforcement with a limited-role key, field and relation leakage, row-level rules, and Claude Desktop against plain-HTTP localhost are left to the local test plan.",
+  "findings": [
+    {
+      "id": "mcp-01",
+      "subQuestion": "Q5a",
+      "claim": "The self-hosted build always exposes an MCP server at POST /mcp: McpModule is imported unconditionally in AppModule and the MCP module contains no feature-flag, config-variable or billing check.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/app.module.ts:68",
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:39",
+        "packages/twenty-server/src/engine/api/mcp/mcp.module.ts:21",
+        "packages/twenty-shared/src/types/ApiPath.ts:17"
+      ],
+      "evidenceQuote": "@Controller(ApiPath.Mcp)",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-02",
+      "subQuestion": "Q5a",
+      "claim": "Transport is stateless streamable HTTP, POST only: other methods get 405 with Allow: POST; replies are plain JSON, or an SSE stream when Accept includes text/event-stream; notifications return 202. Protocol version is fixed at 2025-06-18; serverInfo is Twenty MCP Server 0.1.0.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/middlewares/mcp-method-guard.middleware.ts:14",
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:92",
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:106",
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-protocol-version.const.ts:1",
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-server-info.const.ts:1",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:128"
+      ],
+      "evidenceQuote": "export const MCP_PROTOCOL_VERSION = '2025-06-18';",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-03",
+      "subQuestion": "Q5a",
+      "claim": "Discovery endpoints answer without authentication on the local instance: /.well-known/mcp/server-card.json (streamable-http remote, version 0.0.0), /.well-known/oauth-protected-resource and its /mcp variant, /.well-known/oauth-authorization-server and /.well-known/api-catalog.",
+      "sourceType": "local-check",
+      "refs": [
+        "curl -i -s -m 15 http://localhost:3000/.well-known/mcp/server-card.json",
+        "curl -i -s -m 15 http://localhost:3000/.well-known/oauth-protected-resource",
+        "curl -i -s -m 15 http://localhost:3000/.well-known/oauth-protected-resource/mcp",
+        "curl -i -s -m 15 http://localhost:3000/.well-known/oauth-authorization-server",
+        "curl -i -s -m 15 http://localhost:3000/.well-known/api-catalog",
+        "packages/twenty-server/src/engine/core-modules/well-known/controllers/well-known.controller.ts:21",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-discovery.controller.ts:23"
+      ],
+      "evidenceQuote": "\"remotes\":[{\"type\":\"streamable-http\",\"url\":\"http://localhost:3000/mcp\",\"supportedProtocolVersions\":[\"2025-06-18\"]",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-04",
+      "subQuestion": "Q5b",
+      "claim": "Without credentials POST /mcp returns HTTP 401 with body {\"statusCode\":401,\"error\":\"UnauthorizedException\",\"messages\":[\"Unauthorized\"]} and a WWW-Authenticate header carrying the protected-resource metadata URL and the scopes api profile.",
+      "sourceType": "local-check",
+      "refs": [
+        "curl -i -s -m 15 -X POST http://localhost:3000/mcp -H \"Content-Type: application/json\" -H \"Accept: application/json, text/event-stream\" -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"probe\",\"version\":\"0\"}}}'",
+        "packages/twenty-server/src/engine/api/mcp/guards/mcp-auth.guard.ts:34"
+      ],
+      "evidenceQuote": "WWW-Authenticate: Bearer resource_metadata=\"http://localhost:3000/.well-known/oauth-protected-resource/mcp\", scope=\"api profile\"",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-05",
+      "subQuestion": "Q5b",
+      "claim": "Accepted bearer principals: workspace API key, user access, playground or impersonation tokens, OAuth-client and application tokens; workspace-agnostic tokens are refused. A token with neither API key nor user (client_credentials) fails role resolution with 'User workspace ID missing'.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:40",
+        "packages/twenty-server/src/engine/guards/utils/classify-auth-principal.util.ts:34",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:165",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/oauth.service.ts:328"
+      ],
+      "evidenceQuote": "throw new HttpException( 'User workspace ID missing', HttpStatus.FORBIDDEN, );",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-06",
+      "subQuestion": "Q5b",
+      "claim": "OAuth 2.1 is implemented: authorization code with PKCE S256 (mandatory for public clients), dynamic client registration at POST /oauth/register with no client secret issued, tokens at POST /oauth/token. The authorization endpoint is the frontend /authorize page, not a server route.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-registration.controller.ts:54",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-registration.controller.ts:120",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-discovery.controller.ts:27",
+        "packages/twenty-server/src/engine/core-modules/auth/services/auth.service.ts:544",
+        "packages/twenty-shared/src/types/AppPath.ts:37"
+      ],
+      "evidenceQuote": "Dynamic registrations are always public — we don't issue a client secret via DCR.",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-07",
+      "subQuestion": "Q5b",
+      "claim": "API key creation: UI Settings → MCP & APIs → API tab → Create API key (name, role, expiration); GraphQL on /metadata createApiKey(input:{name,expiresAt,roleId}) then generateApiKeyToken(apiKeyId,expiresAt) returns the bearer token. roleId is mandatory; both mutations reject API-key and OAuth principals.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/api-key/api-key.resolver.ts:81",
+        "packages/twenty-server/src/engine/core-modules/api-key/dtos/create-api-key.input.ts:29",
+        "packages/twenty-server/src/engine/core-modules/auth/auth.resolver.ts:1159",
+        "packages/twenty-front/src/pages/settings/api-webhooks/SettingsApiWebhooks.tsx:150",
+        "packages/twenty-front/src/pages/settings/developers/api-keys/SettingsDevelopersApiKeysNew.tsx:194",
+        "curl -s -X POST http://localhost:3000/metadata -H \"Content-Type: application/json\" -d '{\"query\":\"{ __schema { mutationType { fields { name args { name } } } } }\"}' (introspection confirmed createApiKey(input: CreateApiKeyInput!) and generateApiKeyToken(apiKeyId: UUID!, expiresAt: String!))"
+      ],
+      "evidenceQuote": "Creating a key assigns it a role, so it also requires ROLES to prevent binding a role above the caller's own.",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-08",
+      "subQuestion": "Q5b",
+      "claim": "Each key resolves to one role, changeable with assignRoleToApiKey(apiKeyId, roleId) from the key detail page or the role's Assignment tab. Only roles with canBeAssignedToApiKeys=true are accepted, and the mutation requires a user session with the ROLES permission.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/api-key/api-key.resolver.ts:172",
+        "packages/twenty-server/src/engine/core-modules/api-key/services/api-key-role.service.ts:157",
+        "packages/twenty-server/src/engine/core-modules/api-key/services/api-key-role.service.ts:68",
+        "packages/twenty-front/src/pages/settings/developers/api-keys/SettingsDevelopersApiKeyDetail.tsx:112",
+        "packages/twenty-front/src/modules/settings/roles/role/components/SettingsRole.tsx:90"
+      ],
+      "evidenceQuote": "`Role \"${role.label}\" cannot be assigned to API keys`,",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-09",
+      "subQuestion": "Q5c",
+      "claim": "In the default mode tools/list returns the same seven tools for every caller: search_help_center, get_tool_catalog, execute_tool, load_skills, list_object_metadata_names, list_skills, learn_tools. Record CRUD and other workspace tools are reachable only through execute_tool.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:266",
+        "packages/twenty-server/test/integration/ai/suites/mcp-tool-catalog.integration-spec.ts:114",
+        "packages/twenty-server/test/integration/ai/suites/mcp-tool-catalog.integration-spec.ts:396"
+      ],
+      "evidenceQuote": "expect(response.body.error?.message).toBe( 'Unknown tool: find_many_companies', );",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-10",
+      "subQuestion": "Q5c",
+      "claim": "The catalog behind get_tool_catalog, learn_tools and execute_tool is built per caller from rolePermissionConfig: CRUD tools exist only for objects the role can read, update or soft-delete, and WORKFLOW, METADATA, WEBHOOK, ROLE and DASHBOARD categories require matching permission flags.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:87",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:193",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:37",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/workflow-tool.provider.ts:35",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/metadata-tool.provider.ts:30",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/webhook-tool.provider.ts:27",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/role-tool.provider.ts:28",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/dashboard-tool.provider.ts:35"
+      ],
+      "evidenceQuote": "const objectPermissions = getObjectsPermissionsFromRolePermissionConfig({ rolesPermissions, rolePermissionConfig: context.rolePermissionConfig, });",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-11",
+      "subQuestion": "Q5c",
+      "claim": "POST /mcp?mode=direct lists every role-allowed registry tool with its schema, plus search_help_center, load_skills, list_object_metadata_names and list_skills, and omits the three meta-tools; tools/call for an unlisted name is forwarded to execute_tool.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:88",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:427",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:449"
+      ],
+      "evidenceQuote": "isDirectMode: mode === 'direct',",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-12",
+      "subQuestion": "Q5c",
+      "claim": "Four internal tools are never offered over MCP: code_interpreter, http_request, extract_json_paths and search_output. No resources or prompts exist: resources/list and prompts/list return empty arrays, and unsupported methods such as resources/read return JSON-RPC -32601.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-excluded-tool-names.const.ts:3",
+        "packages/twenty-server/src/engine/core-modules/tool/tools/output-navigation-tool/constants/output-navigation-tool-names.constant.ts:1",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:372",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:384"
+      ],
+      "evidenceQuote": "export const MCP_EXCLUDED_TOOL_NAMES = new Set([ 'code_interpreter', 'http_request', ...OUTPUT_NAVIGATION_TOOL_NAMES, ]);",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-13",
+      "subQuestion": "Q5c",
+      "claim": "App logic functions that declare toolTriggerSettings appear in the MCP catalog as app_<function_name> tools (category LOGIC_FUNCTION) and are callable through execute_tool; an integration test asserts this over /mcp with an OAuth token.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:82",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:134",
+        "packages/twenty-server/test/integration/metadata/suites/application/successful-oauth-only-client-access.integration-spec.ts:213",
+        "https://docs.twenty.com/developers/extend/apps/logic/logic-functions",
+        "packages/twenty-docs/developers/extend/apps/logic/logic-functions.mdx:593"
+      ],
+      "evidenceQuote": "catalog[ToolCategory.LOGIC_FUNCTION]?.map(({ name }) => name), ).toContain('app_installed_application_handler');",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-14",
+      "subQuestion": "Q5c",
+      "claim": "MCP tool annotations are hints only: execute_tool is deliberately marked destructiveHint false so clients do not prompt on every call, and in direct mode every registry tool, including reads, receives the same non-read-only annotation.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-execute-tool-annotations.const.ts:3",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:462"
+      ],
+      "evidenceQuote": "What the caller may write is enforced by their role, not by this hint.",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-15",
+      "subQuestion": "Q5d",
+      "claim": "For an API key caller the role is the one bound to the key (apiKeyRoleMap); MCP passes rolePermissionConfig {unionOf:[roleId]} and an apiKey auth context to every tool. A key without a role makes role resolution throw.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:153",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:400",
+        "packages/twenty-server/src/engine/core-modules/api-key/services/api-key-role.service.ts:68"
+      ],
+      "evidenceQuote": "rolePermissionConfig: { unionOf: [apiKeyRoleId] },",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-16",
+      "subQuestion": "Q5d",
+      "claim": "For a user caller (access token or OAuth) the role is the user's workspace role, intersected with the calling application's default role when it has one. OAuth-only (dynamically registered) applications are created without a default role, so the user's role applies alone.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:172",
+        "packages/twenty-server/src/engine/twenty-orm/utils/resolve-role-ids-for-user.util.ts:3",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/oauth.service.ts:824",
+        "packages/twenty-server/src/engine/core-modules/application/application-install/application-install.service.ts:112"
+      ],
+      "evidenceQuote": "An application acting for a user stays within that person's role and within the role it declared, so permissions are the intersection of both.",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-17",
+      "subQuestion": "Q5d",
+      "claim": "MCP record tools execute through the same Common*QueryRunner services that GraphQL resolvers and REST handlers use; the runner takes a workspace ORM repository built with the caller's rolePermissionConfig, where object-level and field-level (restrictedFields) permissions are validated.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:119",
+        "packages/twenty-server/src/engine/core-modules/record-crud/services/find-records.service.ts:96",
+        "packages/twenty-server/src/engine/api/common/common-query-runners/common-base-query-runner.service.ts:380",
+        "packages/twenty-server/src/engine/api/graphql/workspace-resolver-builder/factories/find-many-resolver.factory.ts:50",
+        "packages/twenty-server/src/engine/api/rest/core/handlers/rest-api-find-many.handler.ts:48",
+        "packages/twenty-server/src/engine/twenty-orm/repository/workspace-repository.ts:1892",
+        "packages/twenty-server/src/engine/twenty-orm/repository/permissions.utils.ts:45"
+      ],
+      "evidenceQuote": ": this.workspaceOrmManager.getRepository<ObjectRecord>( queryRunnerContext.flatObjectMetadata.nameSingular, rolePermissionConfig,",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-18",
+      "subQuestion": "Q5d",
+      "claim": "No permission flag is required to reach /mcp (the controller uses NoPermissionGuard). MCP is narrower than the UI: system and workflow objects have no tools, create/update tools are skipped for automation-blocked objects, deletes are soft, and no destroy or restore tools exist.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:54",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/utils/get-database-crud-tool-flat-objects.util.ts:23",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:280",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:245",
+        "packages/twenty-shared/src/ai/constants/database-crud-operation.const.ts:1"
+      ],
+      "evidenceQuote": "if (canUpdateRecords && canBeManagedByAutomation) {",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-19",
+      "subQuestion": "Q5d",
+      "claim": "A role that cannot read an object does not get a permission error over MCP: execute_tool resolves names against the role-filtered catalog and returns success:false 'Tool \"find_many_x\" not found' (isError true). Object names stay visible to all callers via list_object_metadata_names.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:319",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:334",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-tool-executor.service.ts:126",
+        "packages/twenty-server/src/engine/api/mcp/tools/list-object-metadata-names.tool.ts:26",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-instruction-builder.service.ts:46"
+      ],
+      "evidenceQuote": "message: `Tool \"${toolName}\" not found`,",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-20",
+      "subQuestion": "Q5d",
+      "claim": "MCP passes createdBy with source AGENT (name = API key name or member name) on creates; record operations are metered as API usage tagged MCP; the MCP layer itself emits only metrics (mcp/tool-execution-*, mcp/tool-output-tokens), no per-call audit record.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:193",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:163",
+        "packages/twenty-server/src/engine/core-modules/usage/constants/api-types.constant.ts:10",
+        "packages/twenty-server/src/engine/api/common/common-query-runners/common-base-query-runner.service.ts:552",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-tool-executor.service.ts:100",
+        "packages/twenty-server/src/engine/core-modules/metrics/types/metrics-keys.type.ts:37"
+      ],
+      "evidenceQuote": "source: FieldActorSource.AGENT,",
+      "confidence": "medium"
+    },
+    {
+      "id": "mcp-21",
+      "subQuestion": "Q5e",
+      "claim": "Docs describe one endpoint shape for both deployments: https://{workspace-url}/mcp on cloud and https://{your-domain}/mcp self-hosted. The only self-hosted instruction is that SERVER_URL must match the public URL; no enablement step or plan requirement is mentioned.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/capabilities/mcp",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:10",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:120"
+      ],
+      "evidenceQuote": "For self-hosted instances, replace `{your-workspace-url}` with your server URL.",
+      "confidence": "high"
+    },
+    {
+      "id": "mcp-22",
+      "subQuestion": "Q5e",
+      "claim": "Docs give two auth options (OAuth recommended, API key) with one mcpServers JSON snippet using \"type\": \"streamable-http\" and url, adding an Authorization: Bearer header for API keys; config locations are listed for Claude Desktop, Claude Code, Cursor and ChatGPT.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/capabilities/mcp",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:29",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:53",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:79"
+      ],
+      "evidenceQuote": "\"type\": \"streamable-http\",",
+      "confidence": "high"
+    }
+  ],
+  "docsVsSource": [
+    {
+      "topic": "Dynamic client registration: client secret and grant types",
+      "docsSay": "POST /oauth/register accepts token_endpoint_auth_method client_secret_post and returns client_id plus client_secret ('Store the client_secret securely'); the page also presents client_credentials as available to a registered client.",
+      "sourceSays": "Dynamic registrations are always public: the auth method is forced to 'none', oAuthClientSecretHash is null and the response carries no client_secret. Dynamic clients may only use authorization_code and refresh_token; any other grant_type is rejected with invalid_client_metadata.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/oauth",
+        "packages/twenty-docs/developers/extend/oauth.mdx:22-47",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-registration.controller.ts:42",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-registration.controller.ts:93-105",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-registration.controller.ts:120-124",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-registration.controller.ts:146-176"
+      ]
+    },
+    {
+      "topic": "OAuth authorization endpoint path",
+      "docsSay": "Redirect the user to GET /oauth/authorize on the API host; the endpoint table lists /oauth/authorize.",
+      "sourceSays": "No /oauth/authorize route exists (server routes: /oauth/register, /oauth/token, /oauth/revoke, /oauth/introspect). Discovery advertises {issuer}/authorize, a frontend page; locally it is http://localhost:3002/authorize?iss=..., and GET http://localhost:3000/oauth/authorize returned 404.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/oauth",
+        "packages/twenty-docs/developers/extend/oauth.mdx:65",
+        "packages/twenty-docs/developers/extend/oauth.mdx:173",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-discovery.controller.ts:27-38",
+        "packages/twenty-shared/src/types/AppPath.ts:37",
+        "curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:3000/oauth/authorize?client_id=x&response_type=code\"  (404)",
+        "curl -s http://localhost:3000/.well-known/oauth-authorization-server"
+      ]
+    },
+    {
+      "topic": "In-app MCP settings page and config snippet",
+      "docsSay": "Settings → MCP & APIs → MCP lets you choose the authentication method (OAuth or API Key) and copy a JSON snippet; documented snippets contain \"type\": \"streamable-http\".",
+      "sourceSays": "The MCP tab renders install cards plus a single 'Manual configuration' snippet: {mcpServers:{twenty:{url, headers:{Authorization:'Bearer <YOUR_API_KEY>'}}}} with no type key and no OAuth/API-key chooser. The Claude and Replit install links are disabled when the MCP URL is not HTTPS.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/capabilities/mcp",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:29-37",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:77",
+        "packages/twenty-front/src/modules/settings/mcp-and-apis/components/SettingsMcpSetup.tsx:48-110",
+        "packages/twenty-front/src/modules/settings/mcp-and-apis/utils/mcpSetup.ts:14-32",
+        "packages/twenty-front/src/modules/settings/mcp-and-apis/utils/buildMcpSetupCategories.tsx:55-66",
+        "packages/twenty-front/src/modules/settings/mcp-and-apis/constants/McpSetup.ts:8-11"
+      ]
+    },
+    {
+      "topic": "Role of SERVER_URL in MCP and OAuth discovery",
+      "docsSay": "SERVER_URL is used to generate the OAuth discovery metadata; the MCP endpoint, OAuth endpoints and discovery metadata all derive from this value.",
+      "sourceSays": "issuer, resource, endpoint URLs and the 401 resource_metadata link are built from the incoming request's protocol and Host header (Express trust proxy applies). SERVER_URL is only compared with the Host to decide whether authorization_endpoint should point at the frontend base URL.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/capabilities/mcp",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:120-128",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-discovery.controller.ts:26-38",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-discovery.controller.ts:100-104",
+        "packages/twenty-server/src/utils/get-request-base-url.util.ts:3-5",
+        "packages/twenty-server/src/engine/api/mcp/guards/mcp-auth.guard.ts:26-27"
+      ]
+    },
+    {
+      "topic": "API key creation flow, settings path and role assignment",
+      "docsSay": "Published API page: create a key in Settings → API & Webhooks → + Create key, then scope it under Settings → Members → Roles → Assignment tab. The MCP page links to /developers/extend/api#create-an-api-key. The step-by-step file capabilities/apis.mdx (Name and Expiration Date only) is not published: docs.json redirects it to /developers/extend/api.",
+      "sourceSays": "The settings page is titled 'MCP & APIs' (/settings/mcp-apis, tabs MCP / API / Webhooks). The New key form has a mandatory Role selector and createApiKey requires roleId; the role can also be changed on the key detail page. The published API page has no 'Create an API key' section for the anchor.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/api",
+        "packages/twenty-docs/developers/extend/api.mdx:40",
+        "packages/twenty-docs/developers/extend/capabilities/apis.mdx:66-92",
+        "packages/twenty-docs/docs.json:6937-6938",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:71",
+        "packages/twenty-front/src/pages/settings/api-webhooks/SettingsApiWebhooks.tsx:64-106",
+        "packages/twenty-shared/src/types/SettingsPath.ts:71-75",
+        "packages/twenty-front/src/pages/settings/developers/api-keys/SettingsDevelopersApiKeysNew.tsx:194-208",
+        "packages/twenty-server/src/engine/core-modules/api-key/dtos/create-api-key.input.ts:29-32"
+      ]
+    },
+    {
+      "topic": "What API keys, scopes and client-credentials tokens can access",
+      "docsSay": "OAuth vs API keys table: API keys have 'Full API access', OAuth access is 'Granular via scopes'; a client-credentials token has workspace-level access not tied to a user.",
+      "sourceSays": "Only two scopes exist (api, profile) and the code calls them 'a thin consent boundary'; real permissions come from roles. API keys are bound to one role. On /mcp a token with no user and no API key cannot resolve a role ('User workspace ID missing').",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/oauth",
+        "packages/twenty-docs/developers/extend/oauth.mdx:49-58",
+        "packages/twenty-docs/developers/extend/oauth.mdx:142-156",
+        "packages/twenty-docs/developers/extend/oauth.mdx:182-190",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/constants/oauth-scopes.ts:1-7",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:165-170"
+      ]
+    },
+    {
+      "topic": "Tools listed by the MCP server",
+      "docsSay": "Available Tools names learn_tools, execute_tool, get_tool_catalog and the ?mode=direct variant.",
+      "sourceSays": "tools/list also returns search_help_center, load_skills, list_skills and list_object_metadata_names, which the page does not mention; the exclusion of code_interpreter, http_request, extract_json_paths and search_output is undocumented.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/capabilities/mcp",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:98-111",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:266-321",
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-excluded-tool-names.const.ts:3-7"
+      ]
+    },
+    {
+      "topic": "OAuth access token lifetime",
+      "docsSay": "The token response example shows expires_in: 3600.",
+      "sourceSays": "expires_in is derived from APPLICATION_ACCESS_TOKEN_EXPIRES_IN, whose default is '30m' (1800 seconds); refresh tokens default to 60 days.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/oauth",
+        "packages/twenty-docs/developers/extend/oauth.mdx:117",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:467",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:476",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/oauth.service.ts:837-843"
+      ]
+    }
+  ],
+  "unclear": [
+    {
+      "topic": "Why code_interpreter and http_request are excluded from MCP",
+      "why": "The exclusion constant carries no comment and nothing in mcp-protocol.service.ts or the tests states a reason. Only the output-navigation tools have an implied rationale (MCP never spills large outputs to files: tool-provider/interfaces/tool-retrieval-options.type.ts:7-16). The clone is shallow, so no commit history to consult."
+    },
+    {
+      "topic": "Claude Desktop (or the documented config snippet) against a local plain-HTTP instance",
+      "why": "Docs list claude_desktop_config.json and a snippet with \"type\": \"streamable-http\" but do not say whether any client accepts http://localhost:3000/mcp or that type value; the in-app Claude install link is disabled for non-HTTPS URLs (buildMcpSetupCategories.tsx:59-63). Not testable read-only; needs a real client run."
+    },
+    {
+      "topic": "Row-level permissions over MCP in this self-hosted build",
+      "why": "MCP reuses the permission-checked ORM repository, so row-level predicates apply wherever the ORM applies them, but I did not trace the RLS entitlement gate (BillingEntitlementKey.RLS exists) or whether predicates are active without an enterprise key. Needs the permissions-area trace plus a local test."
+    },
+    {
+      "topic": "Identity and permission checks for app_* logic-function tools called over MCP",
+      "why": "LogicFunctionToolProvider.isAvailable returns true and filters only by canCallerReachApplication; dispatch passes userId and userWorkspaceId but no role. LogicFunctionExecutorService was not read, so whether a restricted role can run an app tool, and which role the function's own API calls use, is not established."
+    },
+    {
+      "topic": "Stored createdBy / updatedBy values for MCP writes",
+      "why": "MCP passes source AGENT, but ActorFromAuthContextService merges createdBy from the auth context when the name is empty and always rebuilds updatedBy. The stored values need a write followed by a SELECT on createdBySource and updatedBySource."
+    },
+    {
+      "topic": "Field-level and relation leakage for a restricted role",
+      "why": "Source drops restricted fields from tool schemas and select lists and skips relations whose target object is unreadable (get-relations-select-fields.util.ts:52-79), but the scalar foreign-key column (for example companyId) appears to stay selectable and field-permission upsert was not exercised. Must be confirmed by the limited-role test."
+    },
+    {
+      "topic": "MCP Inspector CLI flags",
+      "why": "Flags (--cli, --transport http, --header, --method, --tool-name, --tool-args-json, --format json) come from the Inspector repository docs (clients/cli/README.md and docs/cli-smoke-testing.md, v2 line) read through a summarising fetch; npx was not allowed in this phase, so they must be checked with --help."
+    },
+    {
+      "topic": "Rate limits applied to MCP calls",
+      "why": "Docs state 100 API requests per minute. MCP record operations call consumeApiSpeedLimit in the common query runner, but I did not trace the configured limit values or whether non-record MCP tools (metadata, workflow, logic functions) are limited at all."
+    },
+    {
+      "topic": "Session-cookie authentication on /mcp",
+      "why": "AccessTokenService.validateTokenByRequest falls back to the session cookie when no bearer token is present, and CookieSessionCsrfMiddleware then requires an allowed Origin. Whether a logged-in browser can call /mcp this way was not tested (no login in this phase)."
+    },
+    {
+      "topic": "What changed recently in the MCP area",
+      "why": "The repository is a shallow clone at the tag with no git history; only in-code hints (legacy-token fallbacks, backfill comments, docs out of sync) indicate churn."
+    }
+  ],
+  "unstable": [
+    {
+      "item": "MCP server identifies itself as version 0.1.0 while the server card reports the app version (0.0.0 fallback locally)",
+      "evidence": "serverInfo is a hard-coded constant {name:'Twenty MCP Server', version:'0.1.0'}; the server card takes APP_VERSION with FALLBACK_SERVER_VERSION '0.0.0', which is what the local instance returned.",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-server-info.const.ts:3",
+        "packages/twenty-server/src/engine/core-modules/well-known/controllers/well-known.controller.ts:15",
+        "packages/twenty-server/src/engine/core-modules/well-known/controllers/well-known.controller.ts:25",
+        "curl -s http://localhost:3000/.well-known/mcp/server-card.json"
+      ]
+    },
+    {
+      "item": "resources and prompts capabilities are advertised but not implemented",
+      "evidence": "initialize returns resources and prompts capabilities, yet resources/list and prompts/list always return empty arrays and resources/read or prompts/get fall through to 'Method not found'.",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:131-135",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:372-391"
+      ]
+    },
+    {
+      "item": "No tool-list change notifications; tool list is frozen per session",
+      "evidence": "capabilities declare tools listChanged false and the direct-mode instructions say: 'Tools for objects or app functions created during this session only appear after reconnecting (the tool list does not change mid-session).'",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:132",
+        "packages/twenty-server/src/engine/api/mcp/utils/build-mcp-server-instructions.util.ts:30"
+      ]
+    },
+    {
+      "item": "?mode=direct is a secondary mode with caveats",
+      "evidence": "Docs say it 'needs a client that loads tools on demand'; in this mode every registry tool, reads included, is annotated with the non-read-only execute annotations.",
+      "refs": [
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:111",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:449-475"
+      ]
+    },
+    {
+      "item": "Multi-role union is not implemented in the permission resolver",
+      "evidence": "Comment: 'Multi-role union is unimplemented and every producer emits one role, so taking the first is exact rather than lossy.' The API-key MCP path passes {unionOf:[roleId]}.",
+      "refs": [
+        "packages/twenty-server/src/engine/twenty-orm/utils/get-objects-permissions-from-role-permission-config.util.ts:36-41",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:161"
+      ]
+    },
+    {
+      "item": "OAuth documentation out of sync with the implementation",
+      "evidence": "Docs still describe a client_secret from dynamic registration and a /oauth/authorize endpoint; source issues no secret and has no such route, which points to recent changes in the OAuth layer that MCP clients depend on.",
+      "refs": [
+        "packages/twenty-docs/developers/extend/oauth.mdx:30-47",
+        "packages/twenty-docs/developers/extend/oauth.mdx:65",
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/controllers/oauth-registration.controller.ts:120-124"
+      ]
+    },
+    {
+      "item": "Token layer carries legacy fallbacks (signing migration)",
+      "evidence": "Tokens are now signed asymmetrically with a legacy shared-secret verification path kept; comment: 'API_KEY tokens created before 12/12/2025 were accidentally signed with ACCESS type instead of API_KEY. Fall back to the legacy ACCESS secret for backward compatibility.'",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/jwt/services/jwt-wrapper.service.ts:86-127",
+        "packages/twenty-server/src/engine/core-modules/jwt/services/jwt-wrapper.service.ts:156-181",
+        "packages/twenty-server/src/engine/core-modules/auth/strategies/jwt.auth.strategy.ts:457-461"
+      ]
+    },
+    {
+      "item": "OAuth authorization records are a recent addition",
+      "evidence": "Comment: 'Refresh tokens issued before authorizations were recorded have no row to check against. Rejecting them would sign every live integration out the moment this ships, so the first refresh backfills the grant'.",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/application/application-oauth/oauth.service.ts:658-662"
+      ]
+    },
+    {
+      "item": "REST path rest/apiKeys is deprecated",
+      "evidence": "Controller comment: 'rest/apiKeys is deprecated, use rest/metadata/apiKeys instead. rest/apiKeys will be removed in the future'.",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/api-key/controllers/api-key.controller.ts:34-38"
+      ]
+    },
+    {
+      "item": "Enterprise-licensed usage code sits on the MCP request path (licence marker, not instability)",
+      "evidence": "ApiRequestContextMiddleware and the API-type mapping that tags requests as 'MCP' carry the header '/* @license Enterprise */' and are applied to the /mcp route.",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/usage/middlewares/api-request-context.middleware.ts:1",
+        "packages/twenty-server/src/engine/core-modules/usage/constants/api-types.constant.ts:1",
+        "packages/twenty-server/src/app.module.ts:134-136"
+      ]
+    }
+  ],
+  "localTestPlan": [
+    {
+      "goal": "Re-confirm that the MCP server and discovery endpoints are live and how an unauthenticated request is refused (already observed in this phase on 2026-10-03).",
+      "steps": [
+        "curl -i -s -X POST http://localhost:3000/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"pn-probe\",\"version\":\"0\"}}}'",
+        "curl -i -s http://localhost:3000/mcp",
+        "curl -s http://localhost:3000/.well-known/mcp/server-card.json",
+        "curl -s http://localhost:3000/.well-known/oauth-protected-resource/mcp",
+        "curl -s http://localhost:3000/.well-known/oauth-authorization-server   # this GET find-or-creates the 'Twenty CLI' registration row; the row already exists locally, so it only reads",
+        "curl -s -o /dev/null -w '%{http_code}\\n' 'http://localhost:3000/oauth/authorize?client_id=x&response_type=code'"
+      ],
+      "expected": "Step 1: HTTP 401, body {\"statusCode\":401,\"error\":\"UnauthorizedException\",\"messages\":[\"Unauthorized\"]}, header WWW-Authenticate: Bearer resource_metadata=\"http://localhost:3000/.well-known/oauth-protected-resource/mcp\", scope=\"api profile\". Step 2: 405, Allow: POST, JSON-RPC error -32600. Step 3: remotes[0] type streamable-http, url http://localhost:3000/mcp, supportedProtocolVersions [\"2025-06-18\"], version 0.0.0. Step 4: resource http://localhost:3000/mcp. Step 5: authorization_endpoint http://localhost:3002/authorize?iss=..., registration_endpoint http://localhost:3000/oauth/register, code_challenge_methods_supported [\"S256\"]. Step 6: 404.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Obtain a user session token over HTTP and create an Admin-bound API key named 'PN mcp admin' in the seeded Apple workspace (prerequisite for the MCP calls).",
+      "steps": [
+        "mkdir -p /Users/bussss/projects/twenty-playground/pn-mcp && cd /Users/bussss/projects/twenty-playground/pn-mcp   # jq is not installed on this machine; helpers below use python3. Helpers were not executed in this phase (no login allowed); operation and argument names were confirmed by introspection of /metadata",
+        "BASE=http://localhost:3000; FRONT=http://localhost:3002",
+        "jget(){ python3 -c 'import json,sys,functools; d=functools.reduce(lambda a,k: a[int(k)] if k.isdigit() else a[k], sys.argv[1].split(\".\"), json.load(sys.stdin)); print(d if isinstance(d,str) else json.dumps(d,indent=1))' \"$1\"; }",
+        "jvars(){ python3 -c 'import json,sys; a=sys.argv[1:]; print(json.dumps(dict(zip(a[0::2],a[1::2]))))' \"$@\"; }",
+        "gql(){ B=$(python3 -c 'import json,sys; print(json.dumps({\"query\":sys.argv[1],\"variables\":json.loads(sys.argv[2])}))' \"$1\" \"${2:-null}\"); if [ -n \"$TOKEN\" ]; then curl -s \"$BASE/metadata\" -H 'Content-Type: application/json' -H \"Authorization: Bearer $TOKEN\" -d \"$B\"; else curl -s \"$BASE/metadata\" -H 'Content-Type: application/json' -d \"$B\"; fi; }",
+        "Set PN_EMAIL=tim@apple.dev and PN_PASSWORD to the prefilled demo password shown on the login form (same value as packages/twenty-server/test/integration/graphql/suites/auth.integration-spec.ts:14-17); do not echo or store it; unset TOKEN first",
+        "LOGIN=$(gql 'mutation($e:String!,$p:String!,$o:String!){getLoginTokenFromCredentials(email:$e,password:$p,origin:$o){loginToken{token}}}' \"$(jvars e \"$PN_EMAIL\" p \"$PN_PASSWORD\" o \"$FRONT\")\" | jget data.getLoginTokenFromCredentials.loginToken.token)",
+        "TOKEN=$(gql 'mutation($t:String!,$o:String!){getAuthTokensFromLoginToken(loginToken:$t,origin:$o){tokens{accessOrWorkspaceAgnosticToken{token}}}}' \"$(jvars t \"$LOGIN\" o \"$FRONT\")\" | jget data.getAuthTokensFromLoginToken.tokens.accessOrWorkspaceAgnosticToken.token)",
+        "gql '{ getApiKeyRoles { id label canBeAssignedToApiKeys } }'   # set ADMIN_ROLE_ID to the id whose label is Admin",
+        "EXP=$(date -u -v+7d +%Y-%m-%dT%H:%M:%SZ)   # macOS date syntax",
+        "ADMIN_KEY_ID=$(gql 'mutation($n:String!,$x:String!,$r:UUID!){createApiKey(input:{name:$n,expiresAt:$x,roleId:$r}){id name}}' \"$(jvars n 'PN mcp admin' x \"$EXP\" r \"$ADMIN_ROLE_ID\")\" | jget data.createApiKey.id)",
+        "PN_ADMIN_KEY=$(gql 'mutation($k:UUID!,$x:String!){generateApiKeyToken(apiKeyId:$k,expiresAt:$x){token}}' \"$(jvars k \"$ADMIN_KEY_ID\" x \"$EXP\")\" | jget data.generateApiKeyToken.token)",
+        "Browser alternative: http://localhost:3002/settings/mcp-apis → API tab → Create API key → Name 'PN mcp admin', Role Admin, choose an expiration → Save → copy the token (shown once)",
+        "CLI alternative, not run in this phase (development/test only, always binds the Admin role): cd /Users/bussss/projects/twenty/packages/twenty-server && node dist/command/command.js workspace:generate-api-key -w 20202020-1c25-4d02-bf25-6aeccf7ea419 -n 'PN mcp admin' -e 7   # logs TOKEN:<jwt>"
+      ],
+      "expected": "LOGIN and TOKEN are non-empty JWTs (the login also creates a user session row). getApiKeyRoles returns only roles with canBeAssignedToApiKeys=true; per SELECT on core.role the Apple workspace has Admin, Object-restricted and Impersonate-only assignable, while Member and Guest are not. createApiKey returns an id and generateApiKeyToken a JWT; core.\"apiKey\" gains a row named 'PN mcp admin' and core.\"roleTarget\" links it to the Admin role.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Exercise JSON-RPC initialize, tools/list, one read and one write over /mcp with the Admin-bound key, and record how the write is attributed.",
+      "steps": [
+        "mcp(){ curl -s -X POST \"$BASE/mcp$3\" -H \"Authorization: Bearer $1\" -H 'Content-Type: application/json' -H 'Accept: application/json' -H 'MCP-Protocol-Version: 2025-06-18' -d \"$2\"; }   # the server reads neither MCP-Protocol-Version nor any session header; adding text/event-stream to Accept switches the reply to SSE framing (event: message / data: {...})",
+        "mcp \"$PN_ADMIN_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},\"clientInfo\":{\"name\":\"pn-probe\",\"version\":\"0\"}}}' | jget result",
+        "curl -s -o /dev/null -w '%{http_code}\\n' -X POST \"$BASE/mcp\" -H \"Authorization: Bearer $PN_ADMIN_KEY\" -H 'Content-Type: application/json' -d '{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}'",
+        "mcp \"$PN_ADMIN_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}' | python3 -c 'import json,sys; print(sorted(t[\"name\"] for t in json.load(sys.stdin)[\"result\"][\"tools\"]))'",
+        "mcp \"$PN_ADMIN_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"learn_tools\",\"arguments\":{\"toolNames\":[\"find_many_companies\",\"create_one_company\"],\"aspects\":[\"schema\"]}}}' | jget result.content.0.text",
+        "mcp \"$PN_ADMIN_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"find_many_companies\",\"arguments\":{\"limit\":3,\"select\":[\"id\",\"name\"]}}}}' | jget result.content.0.text   # read; select is required",
+        "mcp \"$PN_ADMIN_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"create_one_company\",\"arguments\":{\"name\":\"PN mcp probe co\"}}}}' | jget result.content.0.text   # write; keep the returned id as PN_COMPANY_ID",
+        "docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT id, name, \"createdBySource\", \"createdByName\", \"updatedBySource\" FROM workspace_1wgvd1injqtife6y4rvfbu3h5.company WHERE name LIKE $$PN %$$;'",
+        "mcp \"$PN_ADMIN_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/list\"}' '?mode=direct' | python3 -c 'import json,sys; n=[t[\"name\"] for t in json.load(sys.stdin)[\"result\"][\"tools\"]]; print(len(n), \"find_many_companies\" in n, \"execute_tool\" in n, \"http_request\" in n)'",
+        "mcp \"$PN_ADMIN_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"resources/list\"}'; mcp \"$PN_ADMIN_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"prompts/list\"}'; mcp \"$PN_ADMIN_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"resources/read\",\"params\":{}}'"
+      ],
+      "expected": "initialize: protocolVersion 2025-06-18, serverInfo {name:'Twenty MCP Server', version:'0.1.0'}, capabilities tools/resources/prompts with listChanged false, an instructions string. Notification: 202. tools/list: exactly ['execute_tool','get_tool_catalog','learn_tools','list_object_metadata_names','list_skills','load_skills','search_help_center']. Read: isError false, text {success:true, message:'Found 3 company records', result:{records:[...], count:600 (current non-deleted companies), hasNextPage:true}}. Write: {success:true, message:'Record created successfully in company', result:{id}}. SQL shows the PN row; source predicts createdBySource AGENT and createdByName 'PN mcp admin' — record the actual values. Direct mode prints a large count then True False False. resources/list and prompts/list return empty arrays; resources/read returns error -32601.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Test enforcement: bind a key to a limited role (read-only, company object hidden, one person field hidden) and repeat the read and write over MCP, comparing with REST using the same key.",
+      "steps": [
+        "ROLE_ID=$(gql 'mutation{createOneRole(createRoleInput:{label:\"PN mcp limited\",description:\"PN test role: read-only, company hidden\",icon:\"IconKey\",canUpdateAllSettings:false,canAccessAllTools:false,canReadAllObjectRecords:true,canUpdateAllObjectRecords:false,canSoftDeleteAllObjectRecords:false,canDestroyAllObjectRecords:false,canBeAssignedToUsers:false,canBeAssignedToAgents:false,canBeAssignedToApiKeys:true}){id label}}' | jget data.createOneRole.id)",
+        "docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT \"nameSingular\", id FROM core.\"objectMetadata\" WHERE \"workspaceId\" = $$20202020-1c25-4d02-bf25-6aeccf7ea419$$ AND \"nameSingular\" IN ($$company$$, $$person$$);'   # on 2026-10-03: company fc225736-4a65-4308-9aaf-3b848b80b79b, person 8fd18fd9-ab09-48dd-aa55-9b9799c1fcb5; person.jobTitle field id fc435b6c-48de-4b90-9bd7-681ab170984e (core.\"fieldMetadata\"). Set COMPANY_OBJECT_ID, PERSON_OBJECT_ID, JOBTITLE_FIELD_ID",
+        "gql 'mutation($role:UUID!,$obj:UUID!){upsertObjectPermissions(upsertObjectPermissionsInput:{roleId:$role,objectPermissions:[{objectMetadataId:$obj,canReadObjectRecords:false,canUpdateObjectRecords:false,canSoftDeleteObjectRecords:false,canDestroyObjectRecords:false}]}){objectMetadataId canReadObjectRecords}}' \"$(jvars role \"$ROLE_ID\" obj \"$COMPANY_OBJECT_ID\")\"",
+        "gql 'mutation($role:UUID!,$obj:UUID!,$f:UUID!){upsertFieldPermissions(upsertFieldPermissionsInput:{roleId:$role,fieldPermissions:[{objectMetadataId:$obj,fieldMetadataId:$f,canReadFieldValue:false,canUpdateFieldValue:false}]}){fieldMetadataId canReadFieldValue}}' \"$(jvars role \"$ROLE_ID\" obj \"$PERSON_OBJECT_ID\" f \"$JOBTITLE_FIELD_ID\")\"   # optional field-level case; record any error",
+        "LIMITED_KEY_ID=$(gql 'mutation($n:String!,$x:String!,$r:UUID!){createApiKey(input:{name:$n,expiresAt:$x,roleId:$r}){id name}}' \"$(jvars n 'PN mcp limited' x \"$EXP\" r \"$ROLE_ID\")\" | jget data.createApiKey.id); PN_LIMITED_KEY=$(gql 'mutation($k:UUID!,$x:String!){generateApiKeyToken(apiKeyId:$k,expiresAt:$x){token}}' \"$(jvars k \"$LIMITED_KEY_ID\" x \"$EXP\")\" | jget data.generateApiKeyToken.token)",
+        "mcp \"$PN_LIMITED_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"get_tool_catalog\",\"arguments\":{\"categories\":[\"DATABASE_CRUD\"]}}}' | jget result.content.0.text | grep -E 'compan|create_|update_|delete_|upsert_' | head",
+        "mcp \"$PN_LIMITED_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"find_many_people\",\"arguments\":{\"limit\":2,\"select\":[\"*\"]}}}}' | jget result.content.0.text",
+        "mcp \"$PN_LIMITED_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"find_many_companies\",\"arguments\":{\"limit\":1,\"select\":[\"id\",\"name\"]}}}}'",
+        "mcp \"$PN_LIMITED_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"find_many_people\",\"arguments\":{\"limit\":2,\"select\":[\"id\",\"company\",\"companyId\",\"jobTitle\"]}}}}' | jget result.content.0.text   # relation, foreign-key and restricted-field leakage probe",
+        "mcp \"$PN_LIMITED_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"create_one_person\",\"arguments\":{\"name\":{\"firstName\":\"PN\",\"lastName\":\"Probe\"}}}}}'",
+        "mcp \"$PN_LIMITED_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"get_tool_catalog\",\"arguments\":{\"categories\":[\"ROLE\",\"METADATA\",\"WORKFLOW\",\"WEBHOOK\"]}}}' | jget result.content.0.text",
+        "mcp \"$PN_LIMITED_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"list_object_metadata_names\",\"arguments\":{}}}' | jget result.content.0.text",
+        "mcp \"$PN_LIMITED_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/list\"}' '?mode=direct' | python3 -c 'import json,sys; n=[t[\"name\"] for t in json.load(sys.stdin)[\"result\"][\"tools\"]]; print(len(n), \"find_many_people\" in n, \"find_many_companies\" in n, \"create_one_person\" in n)'",
+        "curl -s -o /dev/null -w '%{http_code}\\n' \"$BASE/rest/companies?limit=1\" -H \"Authorization: Bearer $PN_LIMITED_KEY\"; curl -s -o /dev/null -w '%{http_code}\\n' \"$BASE/rest/people?limit=1\" -H \"Authorization: Bearer $PN_LIMITED_KEY\"   # same key against REST for comparison"
+      ],
+      "expected": "Source predicts: step 6 prints no company tools and no create/update/upsert/delete tools; step 7 succeeds (1200 people locally) and omits jobTitle if the field restriction applied; step 8 returns result.isError true with text {\"success\":false,\"message\":\"Tool \\\"find_many_companies\\\" not found\",...}; step 9 must not return company summaries or jobTitle, while the companyId foreign key may still appear; step 10 returns 'not found'; step 11 shows none of the four categories; step 12 still lists companies (object names are not role-filtered); step 13 prints N True False False; step 14 prints a permission-error status for companies (403 expected) and 200 for people. Record exactly what comes back: any company record data in steps 8, 9 or 14 means the restriction did not hold and must be reported as such.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Connect a real MCP client (MCP Inspector, CLI mode) to the local server and list and call tools with both keys.",
+      "steps": [
+        "node -v   # v24.18.0 on this machine; the Inspector v2 README asks for Node 22.19 or newer in its development setup",
+        "cd /Users/bussss/projects/twenty-playground/pn-mcp && npx -y @modelcontextprotocol/inspector --cli http://localhost:3000/mcp --transport http --header \"Authorization: Bearer $PN_ADMIN_KEY\" --method tools/list",
+        "npx -y @modelcontextprotocol/inspector --cli http://localhost:3000/mcp --transport http --header \"Authorization: Bearer $PN_ADMIN_KEY\" --method tools/call --tool-name execute_tool --tool-args-json '{\"toolName\":\"find_many_companies\",\"arguments\":{\"limit\":3,\"select\":[\"id\",\"name\"]}}' --format json; echo \"exit=$?\"",
+        "Repeat the two commands with $PN_LIMITED_KEY and note the exit codes",
+        "If a flag is rejected: npx -y @modelcontextprotocol/inspector --cli --help   # flags come from the Inspector repository docs (clients/cli/README.md, docs/cli-smoke-testing.md); they were not executed in this phase",
+        "Browser alternative: npx -y @modelcontextprotocol/inspector, choose Streamable HTTP, URL http://localhost:3000/mcp, add header Authorization: Bearer <key>, Connect, List Tools"
+      ],
+      "expected": "The Inspector completes initialize, sends notifications/initialized (server answers 202) and lists the 7 tools; the tools/call output carries content[0].text with {success:true,...} and exit code 0. With the limited key the companies call comes back as a tool error (isError true; the Inspector docs map tool errors to exit code 5). If the client tries a standalone GET stream on /mcp it receives 405 by design.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Optional: verify the OAuth 2.1 path (dynamic client registration, PKCE, user-bound token) without a browser and confirm that the user's role applies over MCP.",
+      "steps": [
+        "REG=$(curl -s -X POST \"$BASE/oauth/register\" -H 'Content-Type: application/json' -d '{\"client_name\":\"PN mcp oauth probe\",\"redirect_uris\":[\"http://127.0.0.1:53682/callback\"],\"grant_types\":[\"authorization_code\",\"refresh_token\"],\"token_endpoint_auth_method\":\"none\"}'); CLIENT_ID=$(printf %s \"$REG\" | jget client_id)",
+        "VERIFIER=$(openssl rand -hex 32); CHALLENGE=$(printf %s \"$VERIFIER\" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')",
+        "REDIRECT=$(gql 'mutation($c:String!,$cc:String,$r:String!){authorizeApp(clientId:$c,codeChallenge:$cc,redirectUrl:$r){redirectUrl}}' \"$(jvars c \"$CLIENT_ID\" cc \"$CHALLENGE\" r 'http://127.0.0.1:53682/callback')\" | jget data.authorizeApp.redirectUrl); CODE=$(python3 -c 'import sys,urllib.parse as u; print(u.parse_qs(u.urlparse(sys.argv[1]).query)[\"code\"][0])' \"$REDIRECT\")   # uses the user TOKEN from the API-key setup in place of the consent page at http://localhost:3002/authorize",
+        "TOK=$(curl -s -X POST \"$BASE/oauth/token\" -H 'Content-Type: application/json' -d \"$(jvars grant_type authorization_code code \"$CODE\" code_verifier \"$VERIFIER\" redirect_uri 'http://127.0.0.1:53682/callback' client_id \"$CLIENT_ID\")\"); OAUTH_TOKEN=$(printf %s \"$TOK\" | jget access_token); REFRESH=$(printf %s \"$TOK\" | jget refresh_token)",
+        "mcp \"$OAUTH_TOKEN\" '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' | python3 -c 'import json,sys; print(sorted(t[\"name\"] for t in json.load(sys.stdin)[\"result\"][\"tools\"]))'",
+        "mcp \"$OAUTH_TOKEN\" '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"find_many_companies\",\"arguments\":{\"limit\":1,\"select\":[\"id\",\"name\"]}}}}' | jget result.content.0.text",
+        "curl -s -X POST \"$BASE/oauth/revoke\" -H 'Content-Type: application/json' -d \"$(jvars token \"$REFRESH\" client_id \"$CLIENT_ID\")\"   # revoke the grant afterwards",
+        "docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT name, \"sourceType\" FROM core.\"applicationRegistration\" WHERE name LIKE $$PN %$$;'"
+      ],
+      "expected": "Registration returns 201 with client_id, token_endpoint_auth_method none and no client_secret. authorizeApp returns a redirectUrl carrying code. /oauth/token returns token_type Bearer, an access_token (default lifetime 30m) and a refresh_token. /mcp accepts the OAuth token and behaves with the authorising user's role (Admin for the demo user). Rows remain in core.applicationRegistration ('PN mcp oauth probe', oauth-only) and core.application for the workspace; list them for cleanup. The flow mirrors packages/twenty-server/test/integration/metadata/suites/application/successful-oauth-only-client-access.integration-spec.ts:31-82.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Clean up the PN artefacts and confirm that a revoked key is refused by /mcp.",
+      "steps": [
+        "mcp \"$PN_ADMIN_KEY\" \"$(python3 -c 'import json,sys; print(json.dumps({\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"delete_one_company\",\"arguments\":{\"id\":sys.argv[1]}}}}))' \"$PN_COMPANY_ID\")\" | jget result.content.0.text   # soft delete only; MCP has no destroy tool",
+        "gql 'mutation($id:UUID!){revokeApiKey(input:{id:$id}){id revokedAt}}' \"$(jvars id \"$LIMITED_KEY_ID\")\"; gql 'mutation($id:UUID!){revokeApiKey(input:{id:$id}){id revokedAt}}' \"$(jvars id \"$ADMIN_KEY_ID\")\"   # needs the user TOKEN; API keys cannot revoke keys",
+        "mcp \"$PN_LIMITED_KEY\" '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}'",
+        "gql 'mutation($r:UUID!){deleteOneRole(roleId:$r)}' \"$(jvars r \"$ROLE_ID\")\"   # if refused because the revoked key still targets the role, record the error",
+        "docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT name, \"revokedAt\" FROM core.\"apiKey\" WHERE name LIKE $$PN %$$; SELECT label FROM core.role WHERE label LIKE $$PN %$$;'",
+        "unset TOKEN LOGIN PN_PASSWORD PN_ADMIN_KEY PN_LIMITED_KEY OAUTH_TOKEN REFRESH; rm -rf /Users/bussss/projects/twenty-playground/pn-mcp"
+      ],
+      "expected": "delete_one_company returns success and the row keeps a deletedAt value. After revocation /mcp answers the revoked key with the 401 body (revoked keys are rejected in jwt.auth.strategy.ts:92-97). The PN role is deleted or the refusal is recorded. core.\"apiKey\" rows remain with revokedAt set (revocation is not deletion); any OAuth registration from the optional test also remains and should be listed in the notes.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    }
+  ]
+}

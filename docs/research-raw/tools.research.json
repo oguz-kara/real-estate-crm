@@ -1,0 +1,674 @@
+{
+  "area": "AI tools: default agent tools and custom tools from apps (Question 2, second half)",
+  "summary": "At v2.44 every AI surface draws on one tool registry with 10 fixed categories: per-object CRUD tools (find/group_by read, create/update/upsert write, soft delete), ACTION tools (HTTP, email, calendar, file upload, code interpreter, help-center search, navigation) and configuration tools for metadata, views, workflows, dashboards, webhooks, navigation and roles, plus provider-native web search. The set is assembled differently per surface: AI chat and MCP expose a name catalog behind learn_tools/execute_tool (chat adds a few direct tools, load_skills and three pausing tools; MCP lists 7 meta tools, or everything with ?mode=direct), a workflow AI-agent step preloads full schemas for DATABASE_CRUD and ACTION only, and runAgent gets learn_tools/execute_tool over DATABASE_CRUD, ACTION, DASHBOARD and WORKFLOW. CRUD tools are generated from the acting role's object and field permissions and the other tools from permission flags; AI chat has no agent at all and acts with the chatting user's role, MCP with the API key's or OAuth user's role, and agents with their own assigned role (no role means no tools; workflow steps additionally need explicit per-object grants). Apps can register custom tools by adding toolTriggerSettings to defineLogicFunction (convention src/logic-functions/*.ts, or Settings > AI > Tools > New Tool); they appear as app_<name> in category LOGIC_FUNCTION to every AI-chat user and MCP caller with no role, flag or per-agent gating. Contrary to the docs and the document-generator tutorial, configured agents (workflow agent steps and runAgent) cannot call these custom tools and cannot load skills in this tag, so a vertical app's own agent calling its own tools would need a core change (alternatives: rely on the generic chat/MCP surface, or orchestrate in the logic function around runAgent). A skill is workspace-wide instruction text listed in the chat/MCP prompt and returned on demand by load_skills; it is not attached to agents and executes nothing. Guard rails: 300 steps per run, SSRF-protected http_request (never exposed over MCP, like code_interpreter), 16 KB output spill in chat/runAgent, three fixed pausing tools (ask_questions, propose_email, request_form) with no generic per-tool approval, and logic functions plus the code interpreter disabled by default outside NODE_ENV=development. Locally no seeded logic function is a tool and no LLM model is configured (client-config aiModels is empty), so catalog and MCP checks can run now while chat and agent runs need an API key.",
+  "findings": [
+    {
+      "id": "F01",
+      "subQuestion": "Q2f",
+      "claim": "Registry tools come from 10 fixed providers: DATABASE_CRUD, ACTION, WORKFLOW, METADATA, VIEW, DASHBOARD, NAVIGATION_MENU_ITEM, WEBHOOK, LOGIC_FUNCTION, ROLE. Per object, CRUD emits read tools find_many/find_one/group_by, write tools create_one/create_many/update_one/update_many/upsert_many, and soft-delete tools delete_one/delete_many.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/ai/constants/tool-category.const.ts:1",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/tool-provider.module.ts:101",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:195",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/utils/get-database-crud-tool-flat-objects.util.ts:25"
+      ],
+      "evidenceQuote": "name: `find_many_${snakePlural}`,",
+      "confidence": "high"
+    },
+    {
+      "id": "F02",
+      "subQuestion": "Q2f",
+      "claim": "ACTION tools. Read: search_help_center, find_connected_accounts, navigate_app, extract_json_paths, search_output. Write or side effects: http_request, send_email, draft_email, create_calendar_event, create_file_upload, complete_file_upload, save_campaign, code_interpreter (Python). Provider-native web_search (Anthropic, OpenAI, xAI) and x_search (xAI) are bound outside the registry.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/action-tool.provider.ts:65",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/constants/action-tool-label.constant.ts:6",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-models/constants/native-model-tools-by-sdk-package.const.ts:16"
+      ],
+      "evidenceQuote": "export const ACTION_TOOL_IDS = [ 'http_request', 'send_email', 'draft_email', 'find_connected_accounts', 'create_calendar_event', 'search_help_center', 'code_interpreter', 'navigate_app', 'save_campaign', 'create_file_upload', 'complete_file_upload', ] as const;",
+      "confidence": "high"
+    },
+    {
+      "id": "F03",
+      "subQuestion": "Q2f",
+      "claim": "Configuration tools: METADATA 13 (get/create/update/delete object and field metadata), VIEW 22 (5 get_* reads; view, field, filter, sort writes), WORKFLOW 22 (builder tools plus update_agent and update_logic_function_source; no tool runs a workflow), DASHBOARD 7, WEBHOOK 4, NAVIGATION_MENU_ITEM 4, ROLE 7.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-tools/services/workflow-tool.workspace-service.ts:95",
+        "packages/twenty-server/src/engine/metadata-modules/view/tools/view-tools.factory.ts:605",
+        "packages/twenty-server/src/engine/metadata-modules/object-metadata/tools/object-metadata-tools.factory.ts:179",
+        "packages/twenty-server/src/engine/metadata-modules/field-metadata/tools/field-metadata-tools.factory.ts:236",
+        "packages/twenty-server/src/modules/dashboard/tools/services/dashboard-tool.workspace-service.ts:53",
+        "packages/twenty-server/src/engine/metadata-modules/role/tools/services/role-tool.workspace-service.ts:59",
+        "packages/twenty-server/src/engine/metadata-modules/webhook/tools/services/webhook-tool.workspace-service.ts:23",
+        "packages/twenty-server/src/engine/metadata-modules/navigation-menu-item/tools/services/navigation-menu-item-tool.workspace-service.ts:26"
+      ],
+      "evidenceQuote": "createUpdateLogicFunctionSourceTool(this.deps, context),",
+      "confidence": "high"
+    },
+    {
+      "id": "F04",
+      "subQuestion": "Q2g",
+      "claim": "AI chat (agent-less: sendChatMessage has no agent argument) gives the model only direct tools: search_help_center, app_exa_web_search if installed, native web search, ask_questions, request_form, learn_tools, execute_tool, load_skills and conditional propose_email, attach_conversation_to_record, complete_workspace_setup. Other tools are a name-only catalog in the system prompt.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:333",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/resolvers/agent-chat.resolver.ts:160",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/constants/ai-chat-tool-names-to-preload.const.ts:3",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/utils/build-tool-catalog-section.util.ts:126"
+      ],
+      "evidenceQuote": "ToolSet is constant for the entire conversation — no mutation. learn_tools returns schemas as text; execute_tool dispatches via the registry.",
+      "confidence": "high"
+    },
+    {
+      "id": "F05",
+      "subQuestion": "Q2g",
+      "claim": "A workflow AI-agent step preloads full-schema tools directly (no learn/execute indirection) from categories DATABASE_CRUD and ACTION only, minus search_help_center, navigate_app, file-upload and output-navigation tools. ask_questions, propose_email and request_form are added only when the step sets canAskQuestions.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:148",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:179",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-excluded-tool-names.const.ts:3",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts:154"
+      ],
+      "evidenceQuote": "Workflow agent nodes run a scoped task: pre-load the full schemas of the few explicitly-granted objects so the model skips the learn_tools round trip.",
+      "confidence": "high"
+    },
+    {
+      "id": "F06",
+      "subQuestion": "Q2g",
+      "claim": "runAgent (SDK call from a logic function, or the metadata GraphQL mutation) uses the lazy strategy: the model gets only learn_tools and execute_tool plus a name catalog limited to categories DATABASE_CRUD, ACTION, DASHBOARD, WORKFLOW. No load_skills and no pausing tools are offered.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:135",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:189",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:228",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/open-ended-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/resolvers/agent-run.resolver.ts:50",
+        "packages/twenty-sdk/src/sdk/logic-function/agents/run-agent.ts:8"
+      ],
+      "evidenceQuote": "Expose a compact catalog plus the learn_tools / execute_tool meta-tools instead, using composed role permissions rather than explicit grants only.",
+      "confidence": "high"
+    },
+    {
+      "id": "F07",
+      "subQuestion": "Q2g",
+      "claim": "MCP tools/list returns 7 tools by default: search_help_center, get_tool_catalog, learn_tools, execute_tool, load_skills, list_object_metadata_names, list_skills. POST /mcp?mode=direct instead lists every permitted registry tool with its schema. code_interpreter, http_request, extract_json_paths and search_output are never reachable over MCP.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:266",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:449",
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:88",
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-excluded-tool-names.const.ts:3"
+      ],
+      "evidenceQuote": "export const MCP_EXCLUDED_TOOL_NAMES = new Set([ 'code_interpreter', 'http_request', ...OUTPUT_NAVIGATION_TOOL_NAMES, ]);",
+      "confidence": "high"
+    },
+    {
+      "id": "F08",
+      "subQuestion": "Q2g",
+      "claim": "ToolRegistryService.getCatalog filters in order: category allow-list, provider.isAvailable, provider.generateDescriptors (object permissions, flags, app reach), excludeTools. execute_tool then applies isToolAllowed, re-resolves the catalog, and ToolExecutorService dispatches to record-CRUD services, a provider's static tool, or LogicFunctionExecutorService (arguments forwarded unvalidated as payload).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:37",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:310",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/tools/execute-tool.tool.ts:42",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:82",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:340"
+      ],
+      "evidenceQuote": "All invocations route through the registry — there is no fast path for preloaded or native tools.",
+      "confidence": "high"
+    },
+    {
+      "id": "F09",
+      "subQuestion": "Q2h",
+      "claim": "CRUD tools are generated only from the role's object permissions: find and group_by need canReadObjectRecords; create, update and upsert need canUpdateObjectRecords on an object not blocked from automation; delete needs canSoftDeleteObjectRecords. Fields the role cannot read or update are dropped from tool schemas.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:193",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:280",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:416",
+        "packages/twenty-server/src/engine/core-modules/record-crud/zod-schemas/record-filter.zod-schema.ts:40",
+        "packages/twenty-server/src/engine/core-modules/record-crud/zod-schemas/record-properties.zod-schema.ts:112",
+        "packages/twenty-shared/src/workflow/constants/ObjectsBlockedFromAutomation.ts:7"
+      ],
+      "evidenceQuote": "if (canUpdateRecords && canBeManagedByAutomation) {",
+      "confidence": "high"
+    },
+    {
+      "id": "F10",
+      "subQuestion": "Q2h",
+      "claim": "Flags gate the rest: HTTP_REQUEST_TOOL (http_request), SEND_EMAIL_TOOL (email tools), CREATE_CALENDAR_EVENT_TOOL, UPLOAD_FILE, CODE_INTERPRETER_TOOL, VIEWS (view writes), DATA_MODEL (METADATA), WORKFLOWS (WORKFLOW), LAYOUTS (DASHBOARD), API_KEYS_AND_WEBHOOKS (WEBHOOK), ROLES (ROLE). canAccessAllTools satisfies tool flags; canUpdateAllSettings satisfies settings flags.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/action-tool.provider.ts:93",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/view-tool.provider.ts:74",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/metadata-tool.provider.ts:30",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/workflow-tool.provider.ts:40",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/dashboard-tool.provider.ts:40",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/webhook-tool.provider.ts:27",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/role-tool.provider.ts:28",
+        "packages/twenty-server/src/engine/metadata-modules/permissions/permissions.service.ts:377",
+        "packages/twenty-shared/src/constants/ToolPermissionFlags.ts:3"
+      ],
+      "evidenceQuote": "const hasBasePermission = this.isToolPermission(setting) ? role.canAccessAllTools : role.canUpdateAllSettings;",
+      "confidence": "high"
+    },
+    {
+      "id": "F11",
+      "subQuestion": "Q2h",
+      "claim": "Role applied — AI chat: sending user's role (intersected with the app role if sent through an app). MCP: API key's role or OAuth user's role. Workflow agent step: the agent's role only. runAgent: agent's role, or the member's role with runAsWorkspaceMemberId.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat-actor.service.ts:145",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:161",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:180",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/utils/build-agent-role-permission-config.util.ts:16",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:208",
+        "packages/twenty-server/src/engine/twenty-orm/utils/resolve-role-ids-for-user.util.ts:3"
+      ],
+      "evidenceQuote": "return { intersectionOf: [agentRoleId] };",
+      "confidence": "high"
+    },
+    {
+      "id": "F12",
+      "subQuestion": "Q2h",
+      "claim": "Agents have no per-agent tool or skill allow-list: tools follow the assigned role, and modelConfiguration.webSearch/twitterSearch only toggle native search. No role means no registry tools. Workflow steps additionally require explicit per-object permission rows; role-wide canReadAllObjectRecords alone yields no CRUD tools.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:359",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:172",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:351",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:154",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/__tests__/database-tool.provider.spec.ts:332",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/entities/agent.entity.ts:24",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentFormContent.tsx:124"
+      ],
+      "evidenceQuote": "Registry tools are scoped exclusively by the agent permission-tab role. No role means no registry tools.",
+      "confidence": "high"
+    },
+    {
+      "id": "F13",
+      "subQuestion": "Q2i",
+      "claim": "A logic function becomes an AI tool by adding toolTriggerSettings ({ inputSchema?, frontComponentUniversalIdentifier? }) to defineLogicFunction; isTool/toolInputSchema were dropped in the 2.3.0 upgrade. A missing inputSchema is inferred from the handler at build time. Files are AST-detected anywhere; convention is src/logic-functions/*.ts.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/application/toolTriggerSettingsType.ts:3",
+        "packages/twenty-apps/fixtures/rich-app/src/logic-functions/lookup-recipient.function.ts:7",
+        "packages/twenty-apps/examples/document-generator/src/logic-functions/generate-document.ts:11",
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-build.ts:291",
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-3/2-3-instance-command-slow-1797000002000-migrate-tool-trigger-settings.ts:33",
+        "https://docs.twenty.com/developers/extend/apps/getting-started/project-structure",
+        "packages/twenty-docs/developers/extend/apps/getting-started/project-structure.mdx:60"
+      ],
+      "evidenceQuote": "Exposes a logic function as an AI tool (chat / MCP / function calling).",
+      "confidence": "high"
+    },
+    {
+      "id": "F14",
+      "subQuestion": "Q2i",
+      "claim": "The model sees the tool as app_<function name lower-cased, non-alphanumerics replaced by _> (generate-document becomes app_generate_document), category LOGIC_FUNCTION, described by the function's description or 'Execute the <name> logic function'. Names carry no app namespace.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:134",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:103",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/__tests__/logic-function-tool.provider.spec.ts:139"
+      ],
+      "evidenceQuote": "return `app_${functionName .toLowerCase() .replace(/[^a-z0-9]+/g, '_') .replace(/^_+|_+$/g, '')}`;",
+      "confidence": "high"
+    },
+    {
+      "id": "F15",
+      "subQuestion": "Q2i",
+      "claim": "Custom tools are not gated by role, flag or agent: every tool-flagged function is listed to any AI-chat user and MCP caller (application tokens see only their own app's). Handlers run with an app token delegated to the calling user, else the app's own.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:29",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:84",
+        "packages/twenty-server/src/engine/core-modules/application/utils/can-caller-reach-application.util.ts:6",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:340",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service.ts:446"
+      ],
+      "evidenceQuote": "Sessions and API keys keep workspace-wide reach behind their permission flags; an application token only reaches its own application.",
+      "confidence": "high"
+    },
+    {
+      "id": "F16",
+      "subQuestion": "Q2i",
+      "claim": "Custom (LOGIC_FUNCTION) tools are not available to configured agents: the workflow AI-agent step loads only DATABASE_CRUD and ACTION, runAgent only DATABASE_CRUD, ACTION, DASHBOARD and WORKFLOW, and execute_tool rejects any name outside that catalog.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/open-ended-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:236",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:242"
+      ],
+      "evidenceQuote": "Restrict the meta-tools to the shown catalog. Enforced at call time, so a tool that appears after the catalog was built still can't be reached, preserving the recursion guard.",
+      "confidence": "high"
+    },
+    {
+      "id": "F17",
+      "subQuestion": "Q2i",
+      "claim": "A skill (defineSkill: name, label, content, optional description/icon) is a workspace-wide text record. Chat and MCP list skill names; the load_skills tool returns the content as markdown on demand; user-tagged skills are inlined. Skills are not linked to agents or roles and execute nothing.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/tools/load-skill.tool.ts:30",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/utils/build-skill-catalog-section.util.ts:9",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/utils/build-referenced-skills-section.util.ts:8",
+        "packages/twenty-server/src/engine/api/mcp/utils/build-mcp-server-instructions.util.ts:75",
+        "packages/twenty-server/src/engine/metadata-modules/skill/entities/skill.entity.ts:14",
+        "packages/twenty-shared/src/application/skillManifestType.ts:3",
+        "packages/twenty-sdk/src/sdk/define/skills/define-skill.ts:5"
+      ],
+      "evidenceQuote": "Skills = documentation (load_skills) — teach HOW to do something, correct schemas and patterns",
+      "confidence": "high"
+    },
+    {
+      "id": "F18",
+      "subQuestion": "Q2i",
+      "claim": "In the local seeded database each workspace (Apple, YCombinator) has 3 logic functions in the Custom app and none has toolTriggerSettings or workflowActionTriggerSettings, so no app_* tool (including the chat-preloaded app_exa_web_search) exists yet.",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c \"SELECT w.\\\"displayName\\\", a.name AS app, lf.name, (lf.\\\"toolTriggerSettings\\\" IS NOT NULL) AS is_tool, (lf.\\\"workflowActionTriggerSettings\\\" IS NOT NULL) AS is_wf_action, (lf.\\\"deletedAt\\\" IS NOT NULL) AS deleted FROM core.\\\"logicFunction\\\" lf LEFT JOIN core.workspace w ON w.id = lf.\\\"workspaceId\\\" LEFT JOIN core.application a ON a.id = lf.\\\"applicationId\\\" ORDER BY 1,2,3;\""
+      ],
+      "evidenceQuote": "Apple | Custom | Extract domain from email | f | f | f",
+      "confidence": "high"
+    },
+    {
+      "id": "F19",
+      "subQuestion": "Q2j",
+      "claim": "http_request goes through SecureHttpClientService: SSRF protection is on by default (private and link-local IPs blocked, http/https only, max 5 redirects). OUTBOUND_HTTP_ALLOWED_INTERNAL_HOSTS allow-lists hosts ('*' allows all); deprecated OUTBOUND_HTTP_SAFE_MODE_ENABLED=false disables protection. The tool needs HTTP_REQUEST_TOOL and is excluded from MCP.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool/tools/http-tool/http-tool.ts:49",
+        "packages/twenty-server/src/engine/core-modules/secure-http-client/secure-http-client.service.ts:144",
+        "packages/twenty-server/src/engine/core-modules/secure-http-client/secure-http-client.service.ts:20",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:106",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:115",
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-excluded-tool-names.const.ts:5"
+      ],
+      "evidenceQuote": "OUTBOUND_HTTP_SAFE_MODE_ENABLED is deprecated but still honoured so self-hosted setups that turned it off keep working after upgrading.",
+      "confidence": "high"
+    },
+    {
+      "id": "F20",
+      "subQuestion": "Q2j",
+      "claim": "Limits: 300 model steps per run (chat and agents); tool outputs over 16,000 bytes are spilled to a file plus preview in chat and runAgent, returned raw in MCP and workflow agents; find tools return 10 rows by default, max 100; create_many max 20.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/constants/agent-config.const.ts:2",
+        "packages/twenty-server/src/engine/core-modules/tool/tools/output-navigation-tool/constants/max-inline-tool-output-bytes.constant.ts:4",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/interfaces/tool-retrieval-options.type.ts:7",
+        "packages/twenty-server/src/engine/core-modules/record-crud/zod-schemas/find-tool.zod-schema.ts:21",
+        "packages/twenty-server/src/engine/core-modules/record-crud/utils/generate-create-many-record-input-schema.util.ts:21"
+      ],
+      "evidenceQuote": "Chat enables this to reduce token usage in the conversation context; MCP and workflow agents leave raw output intact.",
+      "confidence": "high"
+    },
+    {
+      "id": "F21",
+      "subQuestion": "Q2j",
+      "claim": "Only three tools pause a run for a person: ask_questions, propose_email, request_form (fixed PAUSING_TOOLS map, answered by a signed-in user via the answerToolCall mutation on /graphql). No server-side setting makes a registry or custom tool require approval before it executes.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/pausing-tools/constants/pausing-tools.constant.ts:14",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-tool-call-answer/resolvers/tool-call-answer.resolver.ts:68",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:165",
+        "packages/twenty-shared/src/application/toolTriggerSettingsType.ts:7"
+      ],
+      "evidenceQuote": "Tools whose call ends the turn until a person submits its output through answerToolCall.",
+      "confidence": "medium"
+    },
+    {
+      "id": "F22",
+      "subQuestion": "Q2j",
+      "claim": "AI chat excludes create_file_upload and complete_file_upload. code_interpreter exists only when CODE_INTERPRETER_TYPE is not DISABLED, and custom logic-function tools execute only when LOGIC_FUNCTION_TYPE is LOCAL or LAMBDA; both default to LOCAL in development and DISABLED otherwise. Logic-function timeout is 1–900 s, default 300.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/constants/ai-chat-excluded-tool-names.const.ts:1",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:732",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:843",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/action-tool.provider.ts:230",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-drivers/drivers/disabled.driver.ts:23",
+        "packages/twenty-server/src/engine/metadata-modules/logic-function/logic-function.entity.ts:23",
+        "packages/twenty-server/src/engine/metadata-modules/logic-function/logic-function.entity.ts:64"
+      ],
+      "evidenceQuote": "Logic function execution is disabled. Set LOGIC_FUNCTION_TYPE to LOCAL or LAMBDA to enable.",
+      "confidence": "high"
+    }
+  ],
+  "docsVsSource": [
+    {
+      "topic": "Can an app-defined agent call the app's custom tool (document-generator tutorial)?",
+      "docsSay": "\"Because `generate-document` is exposed as a tool, an AI agent can call it.\" ... \"The agent can only call the tool if its role allows it. We already set `canAccessAllTools: true` and `canBeAssignedToAgents: true` on the app's role\" ... \"Open a chat with **Document Assistant** and ask it to draft a document\" (ai-agent.mdx lines 7, 61-63, 68; live page identical on 2026-10-03).",
+      "sourceSays": "No agent run path loads LOGIC_FUNCTION tools: workflow AI-agent step = DATABASE_CRUD + ACTION, runAgent = DATABASE_CRUD + ACTION + DASHBOARD + WORKFLOW, enforced again inside execute_tool. LogicFunctionToolProvider.isAvailable returns true and checks no role or flag, so canAccessAllTools is irrelevant to these tools. AI chat cannot target an agent (createChatThread / sendChatMessage take no agent; ChatExecutionService loads no AgentEntity). What does work: the generic AI chat, acting as the user, can call app_generate_document.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/tutorials/document-generator/ai-agent",
+        "packages/twenty-docs/developers/extend/apps/tutorials/document-generator/ai-agent.mdx:7",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/open-ended-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:29",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/resolvers/agent-chat.resolver.ts:160"
+      ]
+    },
+    {
+      "topic": "runAgent runs the agent 'with its skills and tools'; skills are 'attached to agents'",
+      "docsSay": "\"`runAgent()` lets a logic function run one of your app's agents (with its skills and tools).\" (skills-and-agents.mdx:104-105); \"Skills define reusable instructions and capabilities that AI agents can use within your workspace.\" (:16); tutorial: \"A skill is reusable instructions — knowledge you attach to agents.\" (ai-agent.mdx:13-14).",
+      "sourceSays": "There is no skill-agent relation: AgentEntity and AgentManifest have no skill field, SkillManifest has no agent field, and nothing under ai-agent-execution or the workflow ai-agent action references skills. load_skills and the skill catalog exist only in AI chat and MCP. runAgent's toolset is learn_tools + execute_tool (plus native search); the workflow step has no skill tool either. An agent's tools are whatever registry tools its role allows within the fixed category lists.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:104",
+        "packages/twenty-docs/developers/extend/apps/tutorials/document-generator/ai-agent.mdx:13",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/entities/agent.entity.ts:24",
+        "packages/twenty-shared/src/application/agentManifestType.ts:4",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:249",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:376"
+      ]
+    },
+    {
+      "topic": "Which surfaces can call a toolTriggerSettings function",
+      "docsSay": "\"`toolTriggerSettings` — makes the function discoverable by Twenty's AI features (chat, MCP, function calling).\" (logic-functions.mdx:593); overview table: \"AI tool — A Twenty AI feature decides to call your function\".",
+      "sourceSays": "The only runtime consumer of toolTriggerSettings is LogicFunctionToolProvider. Its tools are reachable from AI chat (name in the system-prompt catalog, then learn_tools / execute_tool) and from MCP (get_tool_catalog / execute_tool, or listed directly with ?mode=direct). They are not reachable from workflow AI-agent steps or runAgent. No separate 'function calling' surface was found.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/logic-functions",
+        "packages/twenty-docs/developers/extend/apps/logic/logic-functions.mdx:593",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:87",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:236"
+      ]
+    },
+    {
+      "topic": "Tool name the model must use",
+      "docsSay": "Tutorial skill and agent prompts tell the model to call the `generate-document` tool (ai-agent.mdx:26 and :54).",
+      "sourceSays": "The registry name is app_generate_document (app_ prefix, lower-case, non-alphanumerics replaced by _). A lookup for generate-document is answered with 'not found' plus similar-name suggestions by learn_tools / execute_tool.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/tutorials/document-generator/ai-agent",
+        "packages/twenty-docs/developers/extend/apps/tutorials/document-generator/ai-agent.mdx:26",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:134",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:323"
+      ]
+    },
+    {
+      "topic": "Agent role behaviour in workflows (documented loosely, stricter in source)",
+      "docsSay": "\"For AI agents running within workflows, role assignment ensures the agent cannot access or modify data outside its intended scope—even if the workflow has broader permissions.\" (permissions-access-control.mdx:29); \"AI agents respect role-based permissions.\" (workflow-actions.mdx:329); \"Agent: Select an existing AI agent or use the default agent\" (workflow-actions.mdx:311).",
+      "sourceSays": "Consistent on scope but stricter and undocumented: adding an AI Agent step auto-creates an agent 'Workflow Agent xxxx' with no role; with no role the agent gets no registry tools at all; in workflow steps only objects with an explicit object-permission row on the agent role yield CRUD tools (requireExplicitObjectGrants), so role-wide read/update flags are ignored. Agent roles never apply to AI chat, which runs as the user.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/capabilities/permissions-access-control",
+        "packages/twenty-docs/user-guide/ai/capabilities/permissions-access-control.mdx:29",
+        "https://docs.twenty.com/user-guide/workflows/capabilities/workflow-actions",
+        "packages/twenty-docs/user-guide/workflows/capabilities/workflow-actions.mdx:311",
+        "packages/twenty-server/src/modules/workflow/workflow-builder/workflow-version-step/workflow-version-step-operations.workspace-service.ts:549",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:172",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:359"
+      ]
+    },
+    {
+      "topic": "MCP permission inheritance",
+      "docsSay": "\"MCP connections inherit the permissions of the authenticated user (OAuth) or the role assigned to the API key.\" (mcp.mdx:115).",
+      "sourceSays": "True for tool listing and execution (role-derived catalog; CRUD goes through the common query runners with the same rolePermissionConfig). Not role-filtered: list_object_metadata_names and the initialize instructions list every non-system object name, and list_skills / load_skills return all active skills. The /mcp controller uses NoPermissionGuard, so the AI permission flag is not required to use MCP.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/capabilities/mcp",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:115",
+        "packages/twenty-server/src/engine/api/mcp/tools/list-object-metadata-names.tool.ts:32",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-instruction-builder.service.ts:46",
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:54"
+      ]
+    },
+    {
+      "topic": "MCP server instructions for discovering custom tools (text the server sends to MCP clients)",
+      "docsSay": "Instructions string: \"LOGIC_FUNCTION:   app_{function_name} — workspace-specific; use list_logic_function_tools to discover\".",
+      "sourceSays": "list_logic_function_tools returns functions with workflowActionTriggerSettings (\"logic functions exposed as workflow actions\"), not AI tools, and is itself a WORKFLOW-category tool that needs the WORKFLOWS flag. AI tools are discoverable with get_tool_catalog(categories: ['LOGIC_FUNCTION']).",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/utils/build-mcp-server-instructions.util.ts:70",
+        "packages/twenty-server/src/modules/workflow/workflow-tools/tools/list-logic-function-tools.tool.ts:18",
+        "packages/twenty-server/src/modules/workflow/workflow-tools/tools/list-logic-function-tools.tool.ts:34"
+      ]
+    },
+    {
+      "topic": "runAgent restrictions stated in docs",
+      "docsSay": "\"An app can only run its own agents.\" (skills-and-agents.mdx:140); \"messages (1 to 100 entries of { role: 'user' | 'assistant', content: string })\" (:135-136).",
+      "sourceSays": "The own-agent check applies only when the caller is an application token; a user session or API key holding the AI flag can call the runAgent mutation for any agent in the workspace, and the tools then follow the agent's role, not the caller's. The 100-entry cap is a class-validator decorator that the resolver's own TODO says is inert (no ResolverValidationPipe installed).",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:135",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:87",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/resolvers/agent-run.resolver.ts:43",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/dtos/run-agent.input.ts:40"
+      ]
+    },
+    {
+      "topic": "Tool-call approval states for app tool widgets",
+      "docsSay": "\"`toolCall.status` walks through `input-available`, the approval states when the tool needs one, and then `output-available`, `output-denied` or `output-error`\" (logic-functions.mdx:733).",
+      "sourceSays": "Approval statuses exist only as an SDK type (FrontComponentToolCallStatus, 'Mirrors the tool part states the chat runtime emits'). The server hydrates tools with description, inputSchema and execute only, ToolTriggerSettings has no approval option, and no needsApproval-style setting exists in the AI or tool modules. The only server-side pauses are ask_questions, propose_email and request_form. No path was found that makes a custom tool wait for approval.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/logic-functions",
+        "packages/twenty-docs/developers/extend/apps/logic/logic-functions.mdx:733",
+        "packages/twenty-sdk/src/sdk/front-component/types/FrontComponentToolCallStatus.ts:1",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:165",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/pausing-tools/constants/pausing-tools.constant.ts:14"
+      ]
+    },
+    {
+      "topic": "Live docs are newer than the v2.44.0 tag (skills-and-agents page)",
+      "docsSay": "Live page fetched 2026-10-03 has a fourth section, sendInboxMessage: \"`sendInboxMessage()` posts a message from your app in a workspace member's chats. It can end on a tool call the member answers from the chat, after which the conversation continues with Twenty's assistant.\" It also adds under runAgent: \"The member must have the `AI` permission, and your app's default role must grant `SystemPermissionFlag.AI`.\"",
+      "sourceSays": "v2.44.0 has neither: the tag's page has only defineSkill, defineAgent and runAgent, and a search for sendInboxMessage in twenty-sdk, twenty-server, twenty-shared and twenty-docs finds nothing. The live logic-functions page and the live tutorial ai-agent page matched the tag on the statements checked.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:102"
+      ]
+    }
+  ],
+  "unclear": [
+    {
+      "topic": "What 'function calling' means in the docs' list of surfaces (chat, MCP, function calling)",
+      "why": "Searched every use of toolTriggerSettings in packages/twenty-server/src: the only runtime consumer is LogicFunctionToolProvider, which is reached from AI chat and MCP. No third surface was found, and the docs do not define the term."
+    },
+    {
+      "topic": "Whether excluding custom (LOGIC_FUNCTION) tools from agent runs is intentional and permanent",
+      "why": "The only rationale in source is the comment 'preserving the recursion guard' in agent-async-executor.service.ts; the docs and tutorial describe the opposite behaviour. The clone is shallow (no history) and no changelog or roadmap statement was found, so the intent cannot be established."
+    },
+    {
+      "topic": "Behaviour when two tool-flagged logic functions normalise to the same app_ name",
+      "why": "The tool name derives only from the function name; core.logicFunction has no unique index on name (pg_indexes shows only id and workspaceId+universalIdentifier) and FlatLogicFunctionValidatorService has no name-uniqueness rule. resolveAndExecute takes the first catalog match and hydrateToolSet lets the later one overwrite. Not tested at runtime."
+    },
+    {
+      "topic": "Whether custom tools actually execute on this local instance",
+      "why": "Execution needs LOGIC_FUNCTION_TYPE to resolve to LOCAL (default only when NODE_ENV=development) and the usage check to pass (IS_EXECUTION_QUOTA_ENABLED is true in the local featureFlag table, billing is disabled). .env values were not read (the variable name appears only commented out) and nothing was executed in this read-only phase."
+    },
+    {
+      "topic": "Database tools in agent evaluation runs (runEvaluationInput)",
+      "why": "RunEvaluationInputJob calls executeAgent without authContext or user identity, while ToolExecutorService.dispatchDatabaseCrud needs an authContext or userId+userWorkspaceId (buildRequiredToolAuthContext throws otherwise). Whether CRUD tool calls can succeed in evaluation runs was read from code only, not verified at runtime. Relevant for app-specific evals."
+    },
+    {
+      "topic": "Approval states for app tool-call widgets at runtime",
+      "why": "The SDK status type lists approval-requested / approval-responded / output-denied and the docs mention 'approval states when the tool needs one', but no server code that puts a registry or logic-function tool call into an approval state was found (searched for needsApproval and approval in the AI, tool and tool-provider modules). Not checked in a browser."
+    }
+  ],
+  "unstable": [
+    {
+      "item": "App skills and agents are documented as alpha",
+      "evidence": "Docs warning: \"Skills and agents are currently in alpha. The feature works but is still evolving.\"",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:7"
+      ]
+    },
+    {
+      "item": "runAgent input validation is not enforced (TODO in resolver)",
+      "evidence": "\"TODO(@abdulrahmancodes): install ResolverValidationPipe here; without it every class-validator decorator on RunAgentInputDTO is inert.\"",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/resolvers/agent-run.resolver.ts:43"
+      ]
+    },
+    {
+      "item": "isTool / toolInputSchema were replaced by toolTriggerSettings and workflowActionTriggerSettings",
+      "evidence": "The 2.3.0 slow instance command migrates and drops the old columns (\"isTool=true previously exposed a function on both surfaces (AI tool and workflow node)\"). Older examples that use isTool are stale.",
+      "refs": [
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-3/2-3-instance-command-slow-1797000002000-migrate-tool-trigger-settings.ts:6",
+        "packages/twenty-shared/src/application/toolTriggerSettingsType.ts:7"
+      ]
+    },
+    {
+      "item": "OUTBOUND_HTTP_SAFE_MODE_ENABLED is deprecated",
+      "evidence": "Config description: \"Deprecated: set OUTBOUND_HTTP_ALLOWED_INTERNAL_HOSTS to * instead. While this is false every private address is reachable and OUTBOUND_HTTP_ALLOWED_INTERNAL_HOSTS is ignored.\"",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:111",
+        "packages/twenty-server/src/engine/core-modules/secure-http-client/secure-http-client.service.ts:145"
+      ]
+    },
+    {
+      "item": "Feature flags change the tool set and tool execution",
+      "evidence": "IS_CONVERSATIONS_TAB_ENABLED gates the attach_conversation_to_record chat tool (false in the local DB); IS_LOGIC_FUNCTION_PREBUILT_MODE_ENABLED selects LIVE vs PREBUILT logic-function execution; IS_EXECUTION_QUOTA_ENABLED (true locally) gates the usage assertion before a logic function, and therefore a custom tool, runs.",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:306",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service.ts:252",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service.ts:301",
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:9"
+      ]
+    },
+    {
+      "item": "AI chat and agent-history data model changed in each of the last three minor versions",
+      "evidence": "Upgrade commands: 2.42 migrate-agent-history-to-workspace; 2.43 add-chat-message-sender and agent-chat-thread-target; 2.44 move-agent-chat-threads-to-record-model and add-workflow-run-to-chat-threads.",
+      "refs": [
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-42/2-42-workspace-command-1789914239896-migrate-agent-history-to-workspace.command.ts",
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-43/2-43-instance-command-fast-1790171503074-add-chat-message-sender.ts",
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-44/2-44-workspace-command-1790751626421-move-agent-chat-threads-to-record-model.command.ts",
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-44/2-44-workspace-command-1790607161319-add-workflow-run-to-chat-threads.command.ts"
+      ]
+    },
+    {
+      "item": "Stale or inconsistent internals around tool discovery and agent tool sets",
+      "evidence": "MCP instructions point to list_logic_function_tools for LOGIC_FUNCTION tools, but that tool lists workflow-action functions. The executor's class comment says workflow registry tools are excluded while the runAgent category list includes WORKFLOW. The runAgent path spills large outputs to a file but excludes extract_json_paths / search_output, the tools that read such files. The standard Helper agent's prompt relies on search_help_center, which agent runs exclude.",
+      "refs": [
+        "packages/twenty-server/src/engine/api/mcp/utils/build-mcp-server-instructions.util.ts:70",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:100",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:232",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:258",
+        "packages/twenty-server/src/engine/workspace-manager/twenty-standard-application/utils/agent-metadata/create-standard-flat-agent-metadata.util.ts:23"
+      ]
+    },
+    {
+      "item": "Core hard-codes a first-party app tool name in the chat preload list",
+      "evidence": "AI_CHAT_TOOL_NAMES_TO_PRELOAD = [...COMMON_PRELOAD_TOOLS, 'app_exa_web_search'] — the only way an app tool becomes a direct (preloaded) chat tool is a core constant.",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/constants/ai-chat-tool-names-to-preload.const.ts:5"
+      ]
+    },
+    {
+      "item": "LOCAL drivers for logic functions and the code interpreter are unsandboxed, development-only",
+      "evidence": "Config description: \"Code interpreter driver type - LOCAL for development (unsafe), E2B for sandboxed execution\"; self-host docs: the local driver \"runs code directly on the host in a Node.js process with no sandboxing\". Both default to DISABLED outside NODE_ENV=development.",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:837",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:732",
+        "https://docs.twenty.com/developers/self-host/capabilities/setup",
+        "packages/twenty-docs/developers/self-host/capabilities/setup.mdx:347"
+      ]
+    },
+    {
+      "item": "Live docs already describe sendInboxMessage(), which does not exist in v2.44.0",
+      "evidence": "The live skills-and-agents page (fetched 2026-10-03) has a sendInboxMessage section (app posts a message, optionally ending on a tool call, into a member's chat); no such symbol exists in the tag's SDK, server, shared package or docs. The app/AI API surface is still moving after this tag.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:102"
+      ]
+    }
+  ],
+  "localTestPlan": [
+    {
+      "goal": "Without an LLM: show that the tool catalog is derived from the caller's role (object and field permissions), using the seeded role 'Object-restricted' that tim@apple.dev holds in the Apple workspace (pet read-only, rocket no access, company.linkedinLink unreadable, person.jobTitle not updatable; the Apple admin is jane.austen@apple.dev).",
+      "steps": [
+        "mkdir -p /Users/bussss/projects/twenty-playground && cd /Users/bussss/projects/twenty-playground",
+        "Get a login token (tim@apple.dev plus the dev password prefilled on the login form / in LOCAL-SETUP.md): curl -s http://localhost:3000/metadata -H 'Content-Type: application/json' -d '{\"query\":\"mutation($e:String!,$p:String!,$o:String!){ getLoginTokenFromCredentials(email:$e,password:$p,origin:$o){ loginToken{ token } } }\",\"variables\":{\"e\":\"tim@apple.dev\",\"p\":\"<DEV_PASSWORD>\",\"o\":\"http://localhost:3002\"}}'",
+        "Exchange it: curl -s http://localhost:3000/metadata -H 'Content-Type: application/json' -d '{\"query\":\"mutation($t:String!,$o:String!){ getAuthTokensFromLoginToken(loginToken:$t,origin:$o){ tokens{ accessOrWorkspaceAgnosticToken{ token } } } }\",\"variables\":{\"t\":\"<LOGIN_TOKEN>\",\"o\":\"http://localhost:3002\"}}' ; then export PN_TOKEN=<token> (shell variable only, never written to a file)",
+        "Define helpers for this and the following tests: gql() { curl -s http://localhost:3000/metadata -H \"Authorization: Bearer $PN_TOKEN\" -H 'Content-Type: application/json' -d \"$1\"; } ; mcp() { curl -s -X POST \"http://localhost:3000/mcp$2\" -H \"Authorization: Bearer $PN_TOKEN\" -H 'Content-Type: application/json' -d \"$1\"; }",
+        "gql '{\"query\":\"{ currentWorkspace { displayName } getToolIndex { name category objectName description } }\"}' > pn-tool-index.json",
+        "jq -r '.data.currentWorkspace.displayName, (.data.getToolIndex | group_by(.category) | map(\"\\(.[0].category) \\(length)\") | .[])' pn-tool-index.json",
+        "jq -r '.data.getToolIndex[].name' pn-tool-index.json | grep -E '_(pet|pets|rocket|rockets)$'",
+        "gql '{\"query\":\"query($a:String!,$b:String!){ a: getToolInputSchema(toolName:$a) b: getToolInputSchema(toolName:$b) }\",\"variables\":{\"a\":\"find_many_companies\",\"b\":\"update_one_person\"}}' > pn-schemas.json ; jq '.data.a' pn-schemas.json | grep -c linkedinLink ; jq '.data.b' pn-schemas.json | grep -c jobTitle"
+      ],
+      "expected": "Workspace is Apple (single-workspace mode falls back to the Apple seed workspace). Categories present: DATABASE_CRUD, ACTION, WORKFLOW, METADATA, VIEW, DASHBOARD, NAVIGATION_MENU_ITEM, WEBHOOK, ROLE; no LOGIC_FUNCTION entries (no seeded tool). The pet/rocket grep prints only find_many_pets, find_one_pet and group_by_pets (no write or delete tool for pet, no tool at all for rocket). Both grep counts in the last step are 0 (restricted fields are removed from the schemas).",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Without an LLM: verify the MCP tool surface, its exclusions and that execution uses the same role-derived catalog (reuses PN_TOKEN and the helpers from the first test).",
+      "steps": [
+        "mcp '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' | jq -r '.result.tools[].name'",
+        "mcp '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}' '?mode=direct' > pn-mcp-direct.json ; jq '.result.tools | length' pn-mcp-direct.json ; jq -r '.result.tools[].name' pn-mcp-direct.json | grep -E '^(http_request|code_interpreter|extract_json_paths|search_output|execute_tool|learn_tools|get_tool_catalog)$|rocket'",
+        "mcp '{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_tool_catalog\",\"arguments\":{\"categories\":[\"ACTION\"]}}}' | jq -r '.result.content[0].text' | jq -r '.catalog.ACTION[].name'",
+        "mcp '{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"http_request\",\"arguments\":{\"url\":\"https://example.com\",\"method\":\"GET\"}}}}' | jq '.result'",
+        "mcp '{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"find_many_rockets\",\"arguments\":{\"select\":[\"*\"],\"limit\":1}}}}' | jq '.result' ; repeat with toolName find_many_pets",
+        "mcp '{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"create_one_pet\",\"arguments\":{\"name\":\"PN pet\"}}}}' | jq '.result'",
+        "mcp '{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"list_object_metadata_names\",\"arguments\":{}}}' | jq -r '.result.content[0].text' | jq -r '.objectNames[]' | grep -c '^rockets$'"
+      ],
+      "expected": "Step 1 prints exactly: search_help_center, get_tool_catalog, execute_tool, load_skills, list_object_metadata_names, list_skills, learn_tools. Step 2: several hundred tools and the grep prints nothing. Step 3: no http_request, code_interpreter, extract_json_paths or search_output. Step 4: isError true with 'Tool \"http_request\" is not available in this context'. Step 5: rockets gives 'Tool \"find_many_rockets\" not found' (isError true), pets succeeds. Step 6: 'Tool \"create_one_pet\" not found', nothing is written. Step 7 prints 1: object names are listed regardless of role (names only).",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Without an LLM: register a custom tool in the workspace Custom app and confirm its name, category, visibility in the chat prompt and execution over MCP (reuses PN_TOKEN and helpers).",
+      "steps": [
+        "gql '{\"query\":\"mutation($input: CreateLogicFunctionFromSourceInput!){ createOneLogicFunction(input:$input){ id name applicationId toolTriggerSettings } }\",\"variables\":{\"input\":{\"name\":\"pn-echo-tool\",\"description\":\"PN test tool: returns a greeting built from a and b\",\"timeoutSeconds\":30,\"toolTriggerSettings\":{\"inputSchema\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"},\"b\":{\"type\":\"number\"}},\"required\":[\"a\",\"b\"]}}}}}' ; note the id as PN_FN_ID (needs the WORKFLOWS permission; with no source the server seeds the default handler main({a,b}) that returns { message }). UI equivalent: Settings > AI > Tools > New Tool.",
+        "gql '{\"query\":\"{ getToolIndex { name category description } }\"}' | jq '.data.getToolIndex[] | select(.category==\"LOGIC_FUNCTION\")'",
+        "gql '{\"query\":\"{ getAiSystemPromptPreview { sections { title content } } }\"}' | jq -r '.data.getAiSystemPromptPreview.sections[] | select(.title==\"Tool Catalog\") | .content' | grep -A2 'Logic Functions'",
+        "mcp '{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"tools/call\",\"params\":{\"name\":\"learn_tools\",\"arguments\":{\"toolNames\":[\"app_pn_echo_tool\"]}}}' | jq -r '.result.content[0].text'",
+        "mcp '{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"app_pn_echo_tool\",\"arguments\":{\"a\":\"x\",\"b\":1}}}}' | jq -r '.result.content[0].text' ; repeat with \"arguments\":{} to see whether the input schema is enforced",
+        "Cleanup (after the LLM tests below if they are run): gql '{\"query\":\"mutation($id: ID!){ deleteOneLogicFunction(input:{id:$id}){ id } }\",\"variables\":{\"id\":\"<PN_FN_ID>\"}}' ; verify: docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT name, \\\"deletedAt\\\" FROM core.\\\"logicFunction\\\" WHERE name LIKE 'pn-%';\""
+      ],
+      "expected": "The tool is listed as app_pn_echo_tool in category LOGIC_FUNCTION with the given description; the prompt preview shows '#### Logic Functions (custom tools) (1 tools)' and '- `app_pn_echo_tool`'; learn_tools returns the input schema; execute_tool returns success with result.message 'Hello, input: x and 1'. If LOGIC_FUNCTION_TYPE resolves to DISABLED the call fails with 'Logic function execution is disabled. Set LOGIC_FUNCTION_TYPE to LOCAL or LAMBDA to enable.' The empty-arguments call is expected to be dispatched anyway (no server-side schema validation) and return 'Hello, input: undefined and undefined'; record the actual result.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "With an LLM key: confirm that runAgent gives an agent only learn_tools/execute_tool over its role's catalog, with no access outside the role and no custom tool.",
+      "steps": [
+        "Precondition: the user has configured an LLM provider key (stop and ask; e.g. ANTHROPIC_API_KEY or OPENAI_API_KEY via Settings > Admin Panel > Configuration Variables) and curl -s http://localhost:3000/client-config | jq '.aiModels | length' is greater than 0. Keep pn-echo-tool from the previous test.",
+        "COMPANY_ID=$(docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT om.id FROM core.\\\"objectMetadata\\\" om JOIN core.workspace w ON w.id = om.\\\"workspaceId\\\" WHERE w.\\\"displayName\\\"='Apple' AND om.\\\"nameSingular\\\"='company';\")",
+        "gql '{\"query\":\"mutation($r: CreateRoleInput!){ createOneRole(createRoleInput:$r){ id label } }\",\"variables\":{\"r\":{\"label\":\"PN agent role\",\"canBeAssignedToAgents\":true,\"canBeAssignedToUsers\":false,\"canBeAssignedToApiKeys\":false,\"canUpdateAllSettings\":false,\"canAccessAllTools\":false,\"canReadAllObjectRecords\":false,\"canUpdateAllObjectRecords\":false,\"canSoftDeleteAllObjectRecords\":false,\"canDestroyAllObjectRecords\":false}}}' ; note ROLE_ID",
+        "gql '{\"query\":\"mutation($i: UpsertObjectPermissionsInput!){ upsertObjectPermissions(upsertObjectPermissionsInput:$i){ objectMetadataId canReadObjectRecords } }\",\"variables\":{\"i\":{\"roleId\":\"<ROLE_ID>\",\"objectPermissions\":[{\"objectMetadataId\":\"<COMPANY_ID>\",\"canReadObjectRecords\":true,\"canUpdateObjectRecords\":false,\"canSoftDeleteObjectRecords\":false,\"canDestroyObjectRecords\":false}]}}}'",
+        "gql '{\"query\":\"mutation($a: CreateAgentInput!){ createOneAgent(input:$a){ id name roleId } }\",\"variables\":{\"a\":{\"name\":\"pn-restricted-agent\",\"label\":\"PN restricted agent\",\"prompt\":\"You are a test agent. Use your tools and report tool errors verbatim.\",\"modelId\":\"workspace-default-model\",\"roleId\":\"<ROLE_ID>\",\"responseFormat\":{\"type\":\"text\"}}}}' (needs AI_SETTINGS); note AGENT_ID",
+        "AGENT_UID=$(docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT \\\"universalIdentifier\\\" FROM core.agent WHERE name='pn-restricted-agent' AND \\\"deletedAt\\\" IS NULL;\") (the Agent GraphQL type does not expose universalIdentifier)",
+        "gql '{\"query\":\"mutation($i: RunAgentInput!){ runAgent(input:$i){ success result error } }\",\"variables\":{\"i\":{\"agentUniversalIdentifier\":\"<AGENT_UID>\",\"prompt\":\"List every tool name in your tool catalog. Then call execute_tool for find_many_people and for app_pn_echo_tool (a=x, b=1) and quote each raw result.\"}}}'",
+        "Cleanup: gql '{\"query\":\"mutation($id: UUID!){ deleteOneAgent(input:{id:$id}){ id } }\",\"variables\":{\"id\":\"<AGENT_ID>\"}}' ; keep 'PN agent role' if the workflow test follows, otherwise gql '{\"query\":\"mutation($id: UUID!){ deleteOneRole(roleId:$id) }\",\"variables\":{\"id\":\"<ROLE_ID>\"}}'"
+      ],
+      "expected": "success is true; the reported catalog contains only find_many_companies, find_one_company, group_by_companies and save_campaign; both execute_tool calls return 'Tool \"...\" is not available in this context and cannot be called here. Do not retry it.' — no access outside the agent role and no custom tool. Server stdout logs 'Generated 2 tools for agent'. Model wording varies: judge by the quoted tool results and record any deviation honestly.",
+      "needsLlmKey": true,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "With an LLM key and the UI: confirm the workflow AI-agent step tool set — no role means no tools, explicit per-object grants are required, tools are preloaded directly, custom tools are absent.",
+      "steps": [
+        "Precondition: LLM key configured; 'PN agent role' (explicit read on company) exists from the previous test. Log in at http://localhost:3002 as tim@apple.dev (Continue with Email, prefilled credentials).",
+        "Workflows > new workflow named 'PN agent wf'; trigger 'Launch manually'; add action 'AI Agent' (this auto-creates an agent labelled 'Workflow Agent xxxx' with no role). Prompt: 'List the exact names of every tool you can call. Do not call any tool.' Run it and read the Agent step output (Run A).",
+        "Settings > Members > Roles > 'PN agent role' > Assignment tab > '+ Assign to AI agent' > pick the 'Workflow Agent xxxx'; run again (Run B).",
+        "Create a role 'PN broad role' with canReadAllObjectRecords true, no per-object rows, canBeAssignedToAgents true (same createOneRole mutation as in the runAgent test), assign it to the same agent instead; run again (Run C).",
+        "For each run note the server stdout lines 'Generated N tools for categories: [DATABASE_CRUD, ACTION]' and 'Generated N tools for agent'.",
+        "Cleanup: delete workflow 'PN agent wf' (removes its agent) and the roles 'PN agent role' and 'PN broad role'."
+      ],
+      "expected": "Run A: no tools ('Generated 0 tools for agent'). Run B: exactly find_many_companies, find_one_company, group_by_companies and save_campaign, offered as direct tools (no learn_tools/execute_tool) and no app_pn_echo_tool. Run C: no CRUD tools although the role can read every object (explicit per-object grants are required in workflow agent steps); only save_campaign remains.",
+      "needsLlmKey": true,
+      "needsBrowser": true,
+      "mutatesData": true
+    },
+    {
+      "goal": "With an LLM key: confirm that AI chat acts with the chatting user's role (not an agent's), can reach the custom tool with no extra grant, and that a pausing tool stops and resumes the turn (GraphQL only; the worker must be running).",
+      "steps": [
+        "Precondition: LLM key configured; PN_TOKEN belongs to tim@apple.dev (role Object-restricted); pn-echo-tool exists; server and worker are running (yarn start).",
+        "gql '{\"query\":\"mutation { createChatThread { id } }\"}' | jq -r '.data.createChatThread.id' ; note THREAD",
+        "gql '{\"query\":\"mutation($t:UUID!,$m:UUID!,$x:String!){ sendChatMessage(threadId:$t,messageId:$m,text:$x){ messageId queued streamId } }\",\"variables\":{\"t\":\"<THREAD>\",\"m\":\"<new uuid from uuidgen>\",\"x\":\"PN test: call learn_tools for find_many_rockets, find_many_pets and app_pn_echo_tool and report notFound; then run app_pn_echo_tool with a=x and b=1; then list 3 pets.\"}}'",
+        "Poll until the assistant answers: gql '{\"query\":\"query($t:UUID!){ chatMessages(threadId:$t){ role parts { type toolName toolCallId toolInput toolOutput state errorMessage textContent } } }\",\"variables\":{\"t\":\"<THREAD>\"}}' | jq '.data.chatMessages[] | select(.role==\"assistant\") | .parts[] | select(.toolName != null) | {toolName, toolCallId, toolInput, toolOutput}'",
+        "Send a second message with a new messageId: 'PN test: before doing anything, ask me one multiple-choice question with ask_questions.' Poll until a part with toolName ask_questions has toolOutput.result.status 'pending', then answer on /graphql: curl -s http://localhost:3000/graphql -H \"Authorization: Bearer $PN_TOKEN\" -H 'Content-Type: application/json' -d '{\"query\":\"mutation($i: AnswerToolCallInput!){ answerToolCall(input:$i){ streamId } }\",\"variables\":{\"i\":{\"threadId\":\"<THREAD>\",\"toolCallId\":\"<toolCallId>\",\"response\":{\"answers\":[{\"questionIndex\":0,\"selectedOptionIndices\":[0]}]}}}}'",
+        "Cleanup: delete the PN test chat thread from the chat list in the UI, then run the custom-tool cleanup (deleteOneLogicFunction)."
+      ],
+      "expected": "learn_tools returns find_many_pets and app_pn_echo_tool and reports find_many_rockets under notFound (tools follow the user's role; no agent is involved in chat). execute_tool for app_pn_echo_tool succeeds with 'Hello, input: x and 1'. Pets are listed, rockets are not. The ask_questions call ends the turn with status 'pending', and answerToolCall returns a non-null streamId and the conversation resumes. Record honestly if the model manages to read rocket data by any route.",
+      "needsLlmKey": true,
+      "needsBrowser": false,
+      "mutatesData": true
+    }
+  ]
+}

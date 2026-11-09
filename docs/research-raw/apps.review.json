@@ -1,0 +1,277 @@
+{
+  "area": "App platform: how apps are defined, installed, and what they can add (Question 1)",
+  "verdicts": [
+    {
+      "id": "Q1a-1",
+      "verdict": "imprecise",
+      "correctedClaim": "An app is a TypeScript package: the CLI scans every .ts/.tsx file for a top-level `export default define*()` (one per file, folders are convention); the minimum is defineApplication with universalIdentifier, displayName and type-required description, plus one default role (defineApplicationRole).",
+      "correctedRefs": [
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-build.ts:68",
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-build.ts:663",
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/sdk/define/application/define-application.ts:25",
+        "/Users/bussss/projects/twenty/packages/twenty-shared/src/application/applicationType.ts:17",
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/operations/dev-once.ts:189"
+      ],
+      "reason": "Scan, one-default-export and default-role logic are as cited (the glob skips node_modules, dist, .twenty, *.d.ts). But `description: string` is non-optional in ApplicationManifest, and plan/apply abort on tsc errors (TYPECHECK_FAILED), so a config with only universalIdentifier and displayName passes SDK validation yet fails the typecheck step. The scaffolder always passes description (possibly ''). The deprecated defaultRoleUniversalIdentifier is still accepted in place of defineApplicationRole."
+    },
+    {
+      "id": "Q1a-2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "TargetFunction enum has exactly 26 members and sdk/define/index.ts exports the same 26 define* functions; the nine listed here were each opened. defineConnectionProvider only accepts type 'oauth'; defineRole also accepts field permissions, permission flags and row-level predicates."
+    },
+    {
+      "id": "Q1a-3",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Enum members, the 'Only one ... is allowed per application' errors at manifest-build.ts:624-639 and AgentManifest fields (prompt, modelId, responseFormat, roleUniversalIdentifier) all match."
+    },
+    {
+      "id": "Q1a-4",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "All ten functions exist in the enum and SDK exports; the deprecation note is at front-components.mdx:137. Same page line 131: USER-scope settings menu items are synced but not displayed yet."
+    },
+    {
+      "id": "Q1b-1",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "dev-once.ts:291-343 and the watch orchestrator both run register, createDevelopmentApplication (sourceType LOCAL at service line 87), uploads, then syncApplication. findOneOwnedByWorkspaceOrThrow (registration.service.ts:440-467) refuses non-owners; universalIdentifier has an instance-wide unique index. The owner column in the database is named \"workspaceId\"."
+    },
+    {
+      "id": "Q1b-2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "application-install.service.ts:268-455 matches the stated order: engines check, writeFilesToStorage, pre-install, applyManifestToWorkspace with forceSdkClientGeneration, post-install queued with retryLimit 3, rollback at 461-469; LOCAL skip at 101-109. install-hooks.mdx:50 agrees that hooks do not run in dev mode. Tarball upload additionally validates engines.twenty against the instance version (application-tarball.service.ts:410)."
+    },
+    {
+      "id": "Q1b-3",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "runUninstall (application-sync.service.ts:397-478) runs the best-effort hook, deletes every app-owned flat entity through a system migration, then applicationService.delete removes the row and stored files. Nothing touches core.applicationRegistration; the stale-registration cron only targets oauth-only rows; deleteApplicationRegistration is a hard delete (registration.service.ts:814). Uninstall requires canBeUninstalled."
+    },
+    {
+      "id": "Q1c-1",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "extending-objects.mdx:7 and :41, objects.mdx:101 (base fields) and data/overview.mdx:94-95 (no partial indexes, 10-index cap) say this; the real-estate example targets STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.person. Local SQL: seeded Custom-app fields on company are plain columns (e.g. tagline) and custom object tables are prefixed with an underscore (_pet)."
+    },
+    {
+      "id": "Q1c-2",
+      "verdict": "imprecise",
+      "correctedClaim": "defineLogicFunction accepts six trigger settings (httpRoute under /s/<path>, cron, databaseEvent queued after the write, serverRoute, tool exposed as `app_<name>`, workflowAction); database-event and cron triggers need the worker, and cron additionally needs `cron:register:all` run once (Docker entrypoints do it; `nx start` does not).",
+      "correctedRefs": [
+        "/Users/bussss/projects/twenty/packages/twenty-shared/src/application/logicFunctionManifestType.ts:11",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/route-trigger/route-trigger.controller.ts:25",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:135",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/logic-function/logic-function-trigger/triggers/cron/cron-trigger.cron.command.ts:12",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/database/commands/cron-register-all.command.ts:183",
+        "/Users/bussss/projects/twenty/packages/twenty-docker/twenty/entrypoint.sh:41",
+        "/Users/bussss/projects/twenty/packages/twenty-server/project.json"
+      ],
+      "reason": "Six trigger settings, the /s controller with five verbs, the app_ prefix and the queue processors are as cited. Missing condition: the cron trigger is a repeatable job created only by cron:trigger:start-cron-trigger / cron:register:all; the server start and worker targets do not run it and no English doc page mentions it. Disclosure: I ran one read-only `redis-cli --scan --pattern 'bull:cron-queue:*'` (outside the two allowed check types); it returned only meta and stalled-check, so no cron is registered here. The /s route is called legacy in source but remains the self-host default (LOGIC_FUNCTION_LEGACY_ROUTE_CUTOFF unset)."
+    },
+    {
+      "id": "Q1c-3",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "config-variables.ts:732-735, 743 and 752; child spawned with process.env minus NODE_OPTIONS (runner 167-171); CHECK 1..900 at entity line 64; default 300 at converter line 80; throttle key is per workspace (executor 322-329). No LOGIC_FUNCTION_TYPE override is stored in core.keyValuePair. Not in the claim: production dependencies go into a runtime layer capped at 250MB (project-structure.mdx), and LOCAL runs on the server's own Node binary although runtime is recorded as nodejs22.x."
+    },
+    {
+      "id": "Q1c-4",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "front-components.mdx:6-22 (four render locations) and :896-990 (limitations), layout/overview.mdx, and the template page layout `type: 'STANDALONE_PAGE'` at line 18 support every part. page-layouts.mdx adds two limits: RECORD_FORM layouts do not render yet and cross-app layout references are unsupported."
+    },
+    {
+      "id": "Q1d-1",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "cli.ts:17-26 lists exactly these options (plus -v and -h); the package uses no prompt library, and install, git init, auth and sync run unconditionally (create-app.command.ts:101-163). Without --url the scaffolder requires Docker and pulls and starts twentycrm/twenty-app-dev on port 2020."
+    },
+    {
+      "id": "Q1d-2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "All command registrations opened (dev/index.ts, dev/function/index.ts, app/index.ts, docker/index.ts, remote/index.ts, deprecated.ts, cli.ts) and they match. Hidden deprecated aliases also include typecheck, add, publish, install, uninstall, catalog-sync and the `remote <sub>` / `server <sub>` forms. The live CLI docs page fetched today matches the tagged file."
+    },
+    {
+      "id": "Q1e-1",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "quick-start.mdx scaffold command and the template files match; examples/hello-world/package.json:24-25 pins 2.13.0 and still uses defaultRoleUniversalIdentifier. The docs also carry a literal `hello-world` front component plus command menu item (front-components.mdx:29-65) that can be dropped into the scaffold. Live quick-start fetched today matches the tag."
+    },
+    {
+      "id": "Q1e-2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "remote/index.ts:15-31 and 271-279, login-oauth.ts, callback-server.ts:181, get-config-path.ts:11, create-app.command.ts:50-67, 137 and 504-554 show this. normalizeUrl leaves 'http://localhost:3000' unchanged, so a remote added with that URL passes the scaffolder's strict apiUrl comparison. If OAuth fails, remote:add falls back to an interactive API-key prompt."
+    },
+    {
+      "id": "Q1e-3",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Seed constant, roleTarget creation, the DEV_API_KEY comment, the NODE_ENV guard (command lines 83-92) and the user-session-only generateApiKeyToken guard are as cited. SQL: one apiKey row (Apple) with an Admin roleTarget; core.apiKey has no token column. LOCAL-SETUP.md says APP_SECRET was regenerated, so DEV_API_KEY should be rejected here (not tested). The command also accepts `-e <days>`."
+    },
+    {
+      "id": "Q1e-4",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Registry checked today: dist-tags latest is 2.45.0; create-twenty-app, twenty-sdk, twenty-client-sdk and twenty-ui 2.44.0 exist with gitHead f7a4720e..., equal to local HEAD (tags sdk/v2.44.0 and twenty/v2.44.0). create-twenty-app@2.44.0 depends on twenty-sdk 2.44.0. The repo package has no dist directory."
+    },
+    {
+      "id": "Q1e-5",
+      "verdict": "imprecise",
+      "correctedClaim": "No SDK-versus-server compatibility check exists: the CLI warns only on a CLI-versus-app-SDK major mismatch and on a stale server (app:install, docker:start); the server enforces only the app's `engines.twenty` against the workspace's completed upgrade version on sync/install and the instance version on tarball upload.",
+      "correctedRefs": [
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/utilities/version/check-sdk-version-compatibility.ts:70",
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/utilities/version/check-server-version-compatibility.ts:8",
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/commands/app/install.ts:18",
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/operations/server-start.ts:327",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/application/application-development/application-development.service.ts:131",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/application/application-install/application-install.service.ts:272",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/application/application-registration/application-tarball.service.ts:410",
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/package.json:119"
+      ],
+      "reason": "Core conclusion holds: nothing compares SDK version with server version, and the SDK's own engines.twenty '>=2.40.0' is never read. Two details are off. The CLI has a second warning, checkServerVersionCompatibility (server more than 7 days and a minor behind the latest published tag); it stays silent here because the server card reports 0.0.0. Tarball upload validates engines.twenty against the instance completed version, not the workspace's. Local cursor re-checked: 2.44.0 completed for both workspaces."
+    },
+    {
+      "id": "Q1e-6",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Template package.json:5-11, yarnrc.yml:1, install.ts:74 and 84, try-git-init.ts:38-66 (skipped inside an existing repo or when the commit fails), create-app.command.ts:165-167 and 491. Locally Node is v24.18.0 and the yarn shim is corepack's; no parent yarn project exists above the playground path."
+    },
+    {
+      "id": "Q1e-7",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran the SQL (Standard and Custom per workspace, local, 1.0.1), the unauthenticated introspection (all named operations present) and the unauthenticated query (UNAUTHENTICATED). Guard at application-install.resolver.ts:73-80; 'My apps' at SettingsApplicationsDeveloperTab.tsx:124; the Developer tab is gated by API_KEYS_AND_WEBHOOKS. tim@apple.dev's role has canUpdateAllSettings = t."
+    },
+    {
+      "id": "Q1f-1",
+      "verdict": "imprecise",
+      "correctedClaim": "The manifest cannot express workflows, webhooks, validation rules, records, or new field/widget/trigger types or model providers; database-event triggers run after the write, so app code cannot veto writes, while core validation rules (flag IS_VALIDATION_RULES_ENABLED) reject writes synchronously but live outside the manifest.",
+      "correctedRefs": [
+        "/Users/bussss/projects/twenty/packages/twenty-shared/src/application/manifestType.ts:35",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/application/application-manifest/utils/find-manifest-entity-descriptor-by-universal-identifier.util.ts:266",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/logic-function/logic-function-trigger/triggers/database-event/call-database-event-trigger-jobs.job.ts:35",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/twenty-orm/repository/workspace-repository.ts:766",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/twenty-orm/utils/validate-records-against-validation-rules.util.ts:238",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/validation-rule/validation-rule.resolver.ts:70",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/config/install-hooks.mdx:29"
+      ],
+      "reason": "The manifest gaps are explicit in source: webhook, workflow, workflowVersion and validationRule map to NO_MANIFEST_CANDIDATES. Two qualifications. (1) A synchronous write veto exists in core 2.44: validation rules evaluated inside the write transaction, flag true in both seeded workspaces, created through the metadata API (DATA_MODEL permission), not app-declarable. (2) Seed records are supported imperatively through the documented post-install hook. The writability part holds and is enforced server-side (twenty-orm/utils/is-metadata-write-permitted.util.ts)."
+    },
+    {
+      "id": "Q1f-2",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Each label is at the cited lines: skills-and-agents.mdx:8, front-components.mdx:10, 796 and 896, timeline-activity-types.mdx:10, messaging-channels.mdx:12, sync-and-recovery.mdx:101, and the Beta pill at SettingsApplications.tsx:41. A grep of the app docs found no other alpha/beta/experimental labels."
+    }
+  ],
+  "missed": [
+    {
+      "subQuestion": "Q1c",
+      "claim": "Runtime access model: by default an app's logic-function API clients act as the person who triggered the run, with that person's role intersected with the app's default role; with no triggering person, or with `runAs: 'application'`, calls use the app role alone (two injected tokens, TWENTY_APP_ACCESS_TOKEN and TWENTY_APP_APPLICATION_ACCESS_TOKEN).",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/logic-functions#whose-access-a-call-uses",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/logic/logic-functions.mdx:552",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service.ts:446"
+      ],
+      "evidenceQuote": "acts as the person who triggered the run: their role intersected with your application's, so the call can never do more than either of you."
+    },
+    {
+      "subQuestion": "Q1f",
+      "claim": "v2.44 ships core validation rules (table added by a 2.44 instance command; flag IS_VALIDATION_RULES_ENABLED, true in both seeded workspaces): expression rules evaluated inside the write transaction that reject record writes. They are created through the metadata API under the workspace Custom application, have no SDK define function, and are not mentioned in the English docs at this tag.",
+      "sourceType": "source",
+      "refs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/application/application-manifest/utils/find-manifest-entity-descriptor-by-universal-identifier.util.ts:286",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/twenty-orm/repository/workspace-repository.ts:766",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/twenty-orm/utils/validate-records-against-validation-rules.util.ts:238",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/validation-rule/validation-rule.resolver.ts:70",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/validation-rule/validation-rule.service.ts:157",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/twenty-orm/workspace-orm.manager.ts:163",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/workspace-manager/dev-seeder/core/utils/seed-feature-flags.util.ts:16",
+        "local-check: docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT key, value FROM core.\"featureFlag\";' -> IS_VALIDATION_RULES_ENABLED | t (both workspaces)"
+      ],
+      "evidenceQuote": "validationRule: {\n    entityKind: 'validation rule',\n    getCandidates: () => NO_MANIFEST_CANDIDATES,"
+    },
+    {
+      "subQuestion": "Q1c",
+      "claim": "Cron-triggered logic functions (and the hourly marketplace catalog sync) fire only after the repeatable cron jobs are registered with the server command `cron:register:all` (or `cron:trigger:start-cron-trigger` for logic functions alone). The Docker entrypoints run it at boot; the from-source start and worker targets do not, and no English doc page mentions it.",
+      "sourceType": "source",
+      "refs": [
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/logic-function/logic-function-trigger/triggers/cron/cron-trigger.cron.command.ts:12",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/database/commands/cron-register-all.command.ts:42",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/database/commands/cron-register-all.command.ts:183",
+        "/Users/bussss/projects/twenty/packages/twenty-docker/twenty/entrypoint.sh:41",
+        "/Users/bussss/projects/twenty/packages/twenty-docker/twenty-app-dev/rootfs/etc/s6-overlay/scripts/register-crons.sh:7",
+        "/Users/bussss/projects/twenty/packages/twenty-server/project.json"
+      ],
+      "evidenceQuote": "if yarn command:prod cron:register:all; then"
+    },
+    {
+      "subQuestion": "Q1f",
+      "claim": "App roles can ship row-level permission predicates in the manifest, but they are enforced only with the RLS entitlement: per the docs they still sync on other plans and are simply not enforced. The metadata-API gate requires a valid enterprise key plus the RLS billing entitlement, neither present on this instance.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/config/roles",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/config/roles.mdx:172",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/metadata-modules/row-level-permission-predicate/services/row-level-permission-predicate.service.ts:559",
+        "/Users/bussss/projects/twenty/packages/twenty-shared/src/application/roleManifestType.ts:57"
+      ],
+      "evidenceQuote": "On other plans the predicates declared in an app manifest still sync, they are simply not enforced."
+    },
+    {
+      "subQuestion": "Q1f",
+      "claim": "Seeding records is supported imperatively: the documented mechanism is a post-install hook (definePostInstallLogicFunction) calling CoreApiClient. It runs on tarball/npm installs only; in dev sync it must be triggered manually with `yarn twenty dev:function:exec --postInstall`.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/config/install-hooks",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/config/install-hooks.mdx:29",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/config/install-hooks.mdx:50",
+        "/Users/bussss/projects/twenty/packages/twenty-server/src/engine/core-modules/application/application-install/application-install.service.ts:418"
+      ],
+      "evidenceQuote": "**Not executed in dev mode**: `yarn twenty dev` skips the install flow and syncs files directly, so hooks never run there. Trigger them manually instead:"
+    },
+    {
+      "subQuestion": "Q1a",
+      "claim": "A role assigned to an app-defined agent (defineAgent roleUniversalIdentifier) must not grant more than the application's default role (object actions, field access, permission flags, row-level scope); the manifest build fails with the excess grants listed.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/config/roles",
+        "/Users/bussss/projects/twenty/packages/twenty-docs/developers/extend/apps/config/roles.mdx:219",
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/utilities/build/manifest/utils/validate-agent-roles-within-application-role.ts:198",
+        "/Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-build.ts:677"
+      ],
+      "evidenceQuote": "Any role you assign to an agent through `roleUniversalIdentifier` on `defineAgent()` must not grant more than the application role"
+    }
+  ],
+  "testPlanIssues": [
+    "Quiet alternative (copy the template from the repo): /Users/bussss/projects/twenty/packages/create-twenty-app/src/constants/template has no yarn.lock. The lockfile is generated at release (src/scripts/generate-template-lock.ts) and exists only in the published package (create-twenty-app@2.44.0 dist/constants/template/yarn.lock, 110,620 bytes per unpkg). `yarn install` therefore re-resolves every `^` range and does not reproduce the tree the 2.44.0 scaffolder installs. Fix: after the `mv` step run `curl -fsSL https://unpkg.com/create-twenty-app@2.44.0/dist/constants/template/yarn.lock -o yarn.lock`, then `yarn install --no-immutable` (the scaffolder's own command, install.ts:84); or record in the notes that the tree was freshly resolved.",
+    "Scaffolder test is marked needsBrowser:false, but create-twenty-app always spawns `open <frontUrl>/page/<pageLayoutId>` after a successful sync (create-app.command.ts:165-167 and 461-486) and has no flag to disable it. If the pre-seeded remote fails validation it opens /authorize and blocks for up to 120 s. Where another process owns the browser, use the quiet alternative or mark this step as browser-affecting.",
+    "Token-minting step: the pipeline has no pipefail and creates the key file before `chmod 600`. A failed mint (wrong NODE_ENV, workspace not found, no TOKEN line) still exits 0 and leaves an empty .pn-twenty-api-key, which later shows up as misleading auth errors. Fix: run `set -o pipefail; umask 077` first and `test -s /Users/bussss/projects/twenty-playground/.pn-twenty-api-key` afterwards. Add `-e 1` (generate-api-key.command.ts:64-77, expiry in days) so the scratch Admin key expires even if the UI revoke step is skipped.",
+    "Cleanup is incomplete: `yarn twenty remote:remove pn-local` only deletes the remote entry (config-service.ts:190-203). ~/.twenty/config.json stays behind with defaultRemote still 'pn-local', and ~/.twenty does not exist today. Fix: add `rm -rf ~/.twenty` to the cleanup, since the directory is created by this test.",
+    "Optional OAuth test: the expectation can be tightened from source. The CLI needs permission flags API_KEYS_AND_WEBHOOKS (createApplicationRegistration, application-registration.resolver.ts:225), APPLICATIONS (createDevelopmentApplication and syncApplication, application-development.resolver.ts:58), UPLOAD_FILE (createApplicationFileUploads and completeApplicationFileUploads, same file :143 and :163) and WORKFLOWS (executeOneLogicFunction, logic-function.resolver.ts:242). tim@apple.dev's 'Object-restricted' role has canUpdateAllSettings = t and canAccessAllTools = t (SELECT on core.role). Record the first mutation that fails, if any, instead of only 'plan succeeds'.",
+    "Coverage gap: no step exercises cron or database-event triggers although Q1c asks about them. If a cron step is added it will not fire on this instance until the job is registered. Prefer `npx nx run twenty-server:command-no-deps -- cron:trigger:start-cron-trigger` (logic-function cron only) over `cron:register:all`, which also registers messaging/calendar jobs and the hourly marketplace sync against registry.npmjs.org."
+  ]
+}

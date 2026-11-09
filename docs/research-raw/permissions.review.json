@@ -1,0 +1,234 @@
+{
+  "area": "permissions",
+  "verdicts": [
+    {
+      "id": "F01",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "role.entity.ts has the six booleans plus objectPermissions/fieldPermissions/rolePermissionFlags/RLS relations; PermissionFlagType has 14 settings + 12 tool flags (TOOL_PERMISSION_FLAGS lists 12); is-object-operation-permitted maps insert and update to canUpdateObjectRecords."
+    },
+    {
+      "id": "F02",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "field-permission.service.ts throws ONLY_FIELD_RESTRICTION_ALLOWED for any non-false value and CANNOT_ADD_FIELD_PERMISSION_ON_SYSTEM_OBJECT for isSystem objects; the cache service forces canRead true for the labelIdentifier field."
+    },
+    {
+      "id": "F03",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran the SQL: Apple tim=Object-restricted, jane.austen=Admin, jony.ive=Member, phil.schiler=Guest, scott.forstall=Impersonate-only. The Admin standard role is isEditable=false and canBeAssignedToAgents=false. createMemberRole runs in workspace-manager.service; createGuestRole is called only by the dev seeder. Note: in YCombinator tim is Admin."
+    },
+    {
+      "id": "F04",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "role-target.entity.ts has CHK_role_target_single_entity and unique indexes per userWorkspace/agent/apiKey. resolve-role-ids-from-auth-context reads application.defaultRoleId for apps."
+    },
+    {
+      "id": "F05",
+      "verdict": "imprecise",
+      "correctedClaim": "On system objects with OPEN readability (messageParticipant, calendarEventParticipant, messageThread...), roles default to true unless overridden. Readability-SYSTEM objects (agentMessage, recordShare, shortLink...) are denied by the ORM row-access gate, INHERITED ones follow their parent, and agentChatThread also needs the AI flag.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/twenty-orm/utils/build-row-access-policy.util.ts:51",
+        "packages/twenty-server/src/engine/core-modules/record-share/utils/resolve-record-share-gate-kind.util.ts:18",
+        "packages/twenty-server/src/engine/metadata-modules/role/services/workspace-roles-permissions-cache.service.ts:205"
+      ],
+      "reason": "The default-true rule at line 164 is real, but buildRowAccessPolicy also applies buildRecordShareGate, which returns 'deny' for MetadataReadability.SYSTEM. The local DB has 8 system objects with readability SYSTEM and 9 INHERITED ones. The cited get-database-crud-tool-flat-objects util also drops readability-SYSTEM objects from AI tools."
+    },
+    {
+      "id": "F06",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran introspection without credentials: all names and arguments match (CreateApiKeyInput.roleId UUID!, CreateAgentInput.roleId optional, assignRoleToApiKey(apiKeyId, roleId), generateApiKeyToken(apiKeyId, expiresAt), removeRoleFromAgent(agentId))."
+    },
+    {
+      "id": "F07",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Object-permission and permission-flag upserts delete rows missing from the input. Field upsert deletes only keys it was given. createApiKey, assignRoleToApiKey and generateApiKeyToken accept apiKey:false and playground:false. RoleResolver's class guard allows apiKey/oauthClient/application principals that have ROLES. AgentResolver allows API keys that have AI (plus AI_SETTINGS for createOneAgent)."
+    },
+    {
+      "id": "F08",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "roleId is non-null with @IsNotEmpty. getRoleIdForApiKeyId throws API_KEY_NO_ROLE_ASSIGNED. agent-async-executor builds registry tools only when agentRoleId is defined, otherwise only nativeTools."
+    },
+    {
+      "id": "F09",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "RoleTargetConfig has 'Assign to agent' and 'Assign to API key'. SettingsAgentRoleTab creates an all-false role with only canBeAssignedToAgents true. The New key form preselects the first canBeAssignedToApiKeys role from getApiKeyRoles, ordered by label ASC. Roles live at SettingsPath members/roles."
+    },
+    {
+      "id": "F10",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "roles.mdx states that logic functions and front components inherit the defineApplicationRole role, allows exactly one per app, and says agent roles must not exceed the application role. The SDK validator emits that build error. The slack agent uses roleUniversalIdentifier."
+    },
+    {
+      "id": "F11",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "agent-chat-actor.service resolves rolePermissionConfig from the sender authContext with apiKeyRoleMap {}. prepareStep re-runs authorize on every step. sendChatMessage has no agent argument; chat messages are stored with agentId null."
+    },
+    {
+      "id": "F12",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "The preloaded path (the workflow step's default) sets rolePermissionConfig from buildAgentRolePermissionConfig and requireExplicitObjectGrants: true. database-tool.provider skips objects without an explicit row for that role. Workflow context gives other steps unionOf [user role] or the standard app role with an Admin fallback."
+    },
+    {
+      "id": "F13",
+      "verdict": "imprecise",
+      "correctedClaim": "runAgent (AI flag) uses {unionOf:[agentRole]} with lazy loading, so no explicit grants are needed and categories include DASHBOARD/WORKFLOW. runAsWorkspaceMemberId (application tokens only) swaps in the member's role for the tools, but an agent with no role still gets no CRM tools.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:208",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:359",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:443"
+      ],
+      "reason": "The replacement logic is correct, but registry tools are built only if isDefined(agentRoleId), so the agent role is not irrelevant. The lazy path (toolLoadingStrategy 'lazy' in agent-run.service) also differs from the workflow step: no requireExplicitObjectGrants, and the open-ended categories apply."
+    },
+    {
+      "id": "F14",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "resolveRoleIdsFromAuthContext returns [apiKeyRole] or the user role (plus the app role through resolveRoleIdsForUser). The common query runner falls back to it when no rolePermissionConfig is passed. mcp-protocol.service uses unionOf [apiKeyRoleId] for keys and an intersection for users."
+    },
+    {
+      "id": "F15",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "onBeforeExecute calls applyRowLevelPermissionPredicates and then validateQueryIsPermitted over the referenced columns of every alias, joins included. assertFieldIsReadableOrThrow is used by the filter parser and resolve-order-by-leaves. get-all-selectable-fields and record-filter.zod-schema skip canRead=false fields."
+    },
+    {
+      "id": "F16",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "navigateToRecord uses buildSystemAuthContext with shouldBypassPermissionChecks: true, selects id and label for all records and fuzzy matches them. The action provider always pushes navigate_app with no flag check. It is not in the MCP or chat exclusion lists, but it is in WORKFLOW_AGENT_EXCLUDED_TOOL_NAMES, which both agent paths use."
+    },
+    {
+      "id": "F17",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "generateSessionToken signs a 5m ACCESS token for the user, or an APPLICATION_ACCESS token for app + user. The descriptor needs codeInterpreterService.isEnabled() plus CODE_INTERPRETER_TOOL (canAccessAllTools passes). CODE_INTERPRETER_TYPE defaults to LOCAL when NODE_ENV is development."
+    },
+    {
+      "id": "F18",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "LogicFunctionToolProvider.isAvailable returns true and only filters by canCallerReachApplication. dispatchLogicFunction passes userId/userWorkspaceId, and the executor mints application tokens, with and without the user. Neither the workflow nor the open-ended category list includes LOGIC_FUNCTION."
+    },
+    {
+      "id": "F19",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "hasRowLevelPermissionFeature = enterprisePlanService.isValid() (validity token) && billingService.hasEntitlement(RLS), and hasEntitlement returns true when billing is off. upsert calls the OrThrow gate first; the find methods return [] or null. The front form gates on billingEntitlements RLS (itself requiring a valid enterprise plan) and shows 'Upgrade to access'."
+    },
+    {
+      "id": "F20",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "isEntitlementActive, the SSO resolver's EnterpriseFeaturesEnabledGuard, the event-logs ClickHouse and entitlement checks, hasCustomAiProviderAccess (25 seats) and MAX_WORKSPACES 5 all verified. No gate was found in the role, object/field-permission, flag or role-target code. Non-permission gates (email groups, custom domain, key rotation) also exist but are outside this claim."
+    },
+    {
+      "id": "F21",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "client-config shows isBillingEnabled false and isClickHouseConfigured false. There are 1005 distinct users. keyValuePair holds only 3 CONFIG_VARIABLE rows, none enterprise-related, and .env has no ENTERPRISE_KEY name. appToken now shows REFRESH_TOKEN|2|2 because of other agents' logins: still refresh tokens only."
+    },
+    {
+      "id": "F22",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran the counts: 391/55/5. row-level-permission-predicate 19 of 20, object-permission, role, permission-flag, role-permission-flag, api-key, tool-provider, api/mcp, metadata-modules/ai and modules/workflow all 0, six twenty-orm RLS utils."
+    }
+  ],
+  "missed": [
+    {
+      "subQuestion": "Q3a",
+      "claim": "Besides roles, each object carries readability (OPEN/PRIVATE/INHERITED/APPLICATION/SYSTEM) and writability, enforced in the ORM row-access policy on top of the role. A role grant cannot read a SYSTEM-readable object or write a SYSTEM/APPLICATION-writable one, and PRIVATE records need a record share.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/twenty-orm/utils/build-row-access-policy.util.ts:24",
+        "packages/twenty-server/src/engine/core-modules/record-share/utils/resolve-record-share-gate-kind.util.ts:15",
+        "packages/twenty-docs/developers/extend/apps/data/objects.mdx:83"
+      ],
+      "evidenceQuote": "case MetadataReadability.SYSTEM:\n      return 'deny';"
+    },
+    {
+      "subQuestion": "Q3c",
+      "claim": "runAgent loads tools lazily with {unionOf:[agentRole]} and no requireExplicitObjectGrants, with categories DATABASE_CRUD, ACTION, DASHBOARD and WORKFLOW. Unlike the workflow AI step, a runAgent agent therefore gets tools for every object its role reaches by default, including OPEN system objects.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:208",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/open-ended-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-registry.service.ts:443"
+      ],
+      "evidenceQuote": "const rolePermissionConfig = isDefined(runAsRoleId)\n      ? buildAgentRolePermissionConfig({ agentRoleId, runAsRoleId })\n      : undefined;"
+    },
+    {
+      "subQuestion": "Q3c",
+      "claim": "At query time, row-level predicates are resolved from the roles of the auth context (user, API key or application), not from the rolePermissionConfig. In agent runs, the agent role's RLS predicates are not the ones applied.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/twenty-orm/utils/resolve-row-level-permission-record-filter.util.ts:22"
+      ],
+      "evidenceQuote": "const roleIds = resolveRoleIdsFromAuthContext({\n    authContext,\n    userWorkspaceRoleMap: internalContext.userWorkspaceRoleMap,\n    apiKeyRoleMap: internalContext.apiKeyRoleMap,\n  });"
+    },
+    {
+      "subQuestion": "Q3c",
+      "claim": "AI CRUD tools (chat, MCP, agents) are never generated for objects with readability SYSTEM, for inactive objects, or for workflow-related objects, whatever the role grants.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/utils/get-database-crud-tool-flat-objects.util.ts:22"
+      ],
+      "evidenceQuote": "objectMetadata.readability !== MetadataReadability.SYSTEM &&"
+    },
+    {
+      "subQuestion": "Q3e",
+      "claim": "Seeded role Object-restricted (tim in Apple) has canUpdateAllSettings and canAccessAllTools true, read-all and update-all true, rocket not readable, pet read-only, company.linkedinLink unreadable and person.jobTitle not updatable. tim is Admin in YCombinator; single-workspace mode logs into Apple.",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c \"SELECT r.label, o.\\\"nameSingular\\\", f.name, fp.\\\"canReadFieldValue\\\", fp.\\\"canUpdateFieldValue\\\" FROM core.\\\"fieldPermission\\\" fp JOIN core.role r ON r.id=fp.\\\"roleId\\\" JOIN core.\\\"objectMetadata\\\" o ON o.id=fp.\\\"objectMetadataId\\\" JOIN core.\\\"fieldMetadata\\\" f ON f.id=fp.\\\"fieldMetadataId\\\" WHERE r.label NOT LIKE 'PN %'\"",
+        "packages/twenty-server/src/engine/core-modules/domain/workspace-domains/services/workspace-domains.service.ts:87"
+      ],
+      "evidenceQuote": "Object-restricted | person | jobTitle |  | f\nObject-restricted | company | linkedinLink | f | f"
+    },
+    {
+      "subQuestion": "Q3a",
+      "claim": "agentChatThread records additionally require the AI permission (canAccessAllTools or the AI flag) on top of the object permissions, and workspaceMember is always readable while its writes need WORKSPACE_MEMBERS.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/role/services/workspace-roles-permissions-cache.service.ts:205"
+      ],
+      "evidenceQuote": "canRead = canRead && hasAiPermission;"
+    }
+  ],
+  "testPlanIssues": [
+    "T6 expected: runAgent uses the lazy path without requireExplicitObjectGrants. The catalog will likely also list find tools for OPEN system objects (message participants, calendar events, workspace members...), plus WORKFLOW/DASHBOARD tools if the role allows them. Fix: expect those tools, record any as exposure, and keep the 'only explicit rows' expectation for the optional workflow-step path only.",
+    "T5 framing ('no-LLM proxy for what a runAgent agent with this role can reach') is inexact. MCP excludes code_interpreter/http_request but offers navigate_app. runAgent excludes navigate_app, search_help_center and file-upload tools and limits categories to DATABASE_CRUD/ACTION/DASHBOARD/WORKFLOW. Fix: treat the navigate_app probe as MCP/chat only, and compare only CRUD tools as a rough proxy.",
+    "T4 expected for system-object probes: depends on readability, not just isSystem. messageParticipants, calendarEventParticipants and workspaceMembers are OPEN, so 200 is expected. Readability-SYSTEM objects (agentMessage, recordShare, shortLink...) are denied, and INHERITED ones (attachments, timelineActivities, noteTargets) follow parent readability. Fix: note this in the expected text, or add one SYSTEM-readability probe as a negative control.",
+    "T1/T7: tim@apple.dev is Admin in YCombinator but Object-restricted in Apple. getLoginTokenFromCredentials resolves to the Apple seed in single-workspace mode, so it works, but the plan should check currentWorkspace.displayName = Apple before reading the results (already listed under expected; make it a gate)."
+  ]
+}

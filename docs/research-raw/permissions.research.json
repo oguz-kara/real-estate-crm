@@ -1,0 +1,676 @@
+{
+  "area": "Permissions: roles for agents and API keys, enforcement, paid gating (Question 3)",
+  "summary": "A v2.44 role combines workspace-wide booleans, per-object overrides, restriction-only field permissions, permission flags and (enterprise-only) row-level predicates; each workspace member, agent or API key holds exactly one role, and an app gets its role via defineApplicationRole. Assignment is scriptable on POST /metadata (createOneRole, upsertObjectPermissions, upsertFieldPermissions, assignRoleToAgent, createApiKey with a mandatory roleId, assignRoleToApiKey) and in the UI under Settings → Members → Roles → Assignment, the agent's Role tab and the New key form. Enforcement is in the ORM (object, field and row policy on every query, shared by REST, GraphQL, MCP and AI tools), but the role that applies depends on the channel: AI chat always uses the chatting user's role and ignores agent roles; a workflow AI-agent step and runAgent use the agent's role alone; runAgent with runAsWorkspaceMemberId uses the member's role instead; an API key uses its single role. So \"assign a role to an agent and test it through AI chat\" cannot be done as phrased: test agent roles with runAgent or a workflow step, and chat restrictions with a limited user (seeded tim@apple.dev is already \"Object-restricted\", not Admin; the seeded Admin API key \"My api key\" has no stored token and must be minted with generateApiKeyToken). Gaps read in source, not yet runtime-verified: navigate_app reads record ids/names with a permission bypass (AI chat and MCP), code_interpreter gives its sandbox the user's token, app-defined tools run with the app's role and are not offered to workflow/runAgent agents at all, and system objects stay accessible to a deny-all role unless explicitly overridden. Only row-level predicates (plus SSO, audit logs, custom AI providers above 25 seats, more than 5 workspaces) are enterprise-gated; object- and field-level permissions are ungated, and this build has no enterprise key, so RLS is unavailable here. The three live docs pages checked matched the repo docs; two doc statements contradict source (API keys \"without an assigned role\", and manifest RLS predicates being \"simply not enforced\").",
+  "findings": [
+    {
+      "id": "F01",
+      "subQuestion": "Q3a",
+      "claim": "A role combines six workspace-wide booleans (all settings, all tools, read/update/soft-delete/destroy all objects), per-object overrides, restriction-only field permissions, permission flags (14 settings + 12 tool locally) and row-level predicates. No separate create permission: inserts require canUpdateObjectRecords.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/role/role.entity.ts:29",
+        "packages/twenty-server/src/engine/twenty-orm/utils/is-object-operation-permitted.util.ts:21",
+        "packages/twenty-shared/src/constants/PermissionFlagType.ts:1",
+        "packages/twenty-shared/src/constants/ToolPermissionFlags.ts:3"
+      ],
+      "evidenceQuote": "case 'insert': case 'update': return objectPermissions?.canUpdateObjectRecords === true;",
+      "confidence": "high"
+    },
+    {
+      "id": "F02",
+      "subQuestion": "Q3a",
+      "claim": "Field permissions can only restrict: canReadFieldValue / canUpdateFieldValue accept false or null, never true. They are rejected on system objects, and an object's label-identifier field always remains readable even if restricted.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/object-permission/field-permission/field-permission.service.ts:370",
+        "packages/twenty-server/src/engine/metadata-modules/object-permission/field-permission/field-permission.service.ts:399",
+        "packages/twenty-server/src/engine/metadata-modules/role/services/workspace-roles-permissions-cache.service.ts:190"
+      ],
+      "evidenceQuote": "Field permissions can only be used to restrict access, not to grant additional permissions.",
+      "confidence": "high"
+    },
+    {
+      "id": "F03",
+      "subQuestion": "Q3a",
+      "claim": "Admin is the only standard role (non-editable; users + API keys, not agents); Member is created per workspace as default. Local Apple also has dev-seed Guest, Object-restricted and Impersonate-only; tim@apple.dev holds Object-restricted, jane.austen@apple.dev is Admin.",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c \"SELECT w.\\\"displayName\\\", u.email, r.label FROM core.\\\"roleTarget\\\" rt JOIN core.role r ON r.id = rt.\\\"roleId\\\" JOIN core.\\\"userWorkspace\\\" uw ON uw.id = rt.\\\"userWorkspaceId\\\" JOIN core.\\\"user\\\" u ON u.id = uw.\\\"userId\\\" JOIN core.workspace w ON w.id = rt.\\\"workspaceId\\\" WHERE u.email IN ('tim@apple.dev','jony.ive@apple.dev','jane.austen@apple.dev','phil.schiler@apple.dev','scott.forstall@apple.dev') ORDER BY 1,2\"",
+        "packages/twenty-server/src/engine/workspace-manager/twenty-standard-application/utils/role-metadata/create-standard-flat-role-metadata.util.ts:9",
+        "packages/twenty-server/src/engine/metadata-modules/role/role.service.ts:458",
+        "packages/twenty-server/src/engine/workspace-manager/dev-seeder/core/services/dev-seeder-permissions.service.ts:101"
+      ],
+      "evidenceQuote": "Apple | tim@apple.dev | Object-restricted",
+      "confidence": "high"
+    },
+    {
+      "id": "F04",
+      "subQuestion": "Q3a",
+      "claim": "A role target binds a role to exactly one of userWorkspace, agent or apiKey (DB CHECK constraint; one role per target, re-assignment replaces it). Applications are not targets: they point to a role via application.defaultRoleId.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/role-target/role-target.entity.ts:21",
+        "packages/twenty-server/src/engine/twenty-orm/utils/resolve-role-ids-from-auth-context.util.ts:32"
+      ],
+      "evidenceQuote": "@Unique('IDX_ROLE_TARGET_UNIQUE_AGENT', ['workspaceId', 'agentId'])",
+      "confidence": "high"
+    },
+    {
+      "id": "F05",
+      "subQuestion": "Q3a",
+      "claim": "For isSystem objects every role defaults to read/update/soft-delete/destroy = true unless an explicit objectPermission row exists; workspaceMember is always readable; workflow objects follow the WORKFLOWS flag. An 'everything false' role therefore still reaches system objects such as messageParticipant.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/role/services/workspace-roles-permissions-cache.service.ts:161",
+        "packages/twenty-server/src/engine/metadata-modules/role/services/workspace-roles-permissions-cache.service.ts:143",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/utils/get-database-crud-tool-flat-objects.util.ts:16"
+      ],
+      "evidenceQuote": ") => overrideValue ?? (isSystem ? true : defaultValue);",
+      "confidence": "medium"
+    },
+    {
+      "id": "F06",
+      "subQuestion": "Q3b",
+      "claim": "Scriptable on POST /metadata: createOneRole(createRoleInput), upsertObjectPermissions, upsertFieldPermissions, upsertPermissionFlags, assignRoleToAgent(agentId, roleId), removeRoleFromAgent(agentId), createOneAgent(input.roleId optional), createApiKey(input: name, expiresAt, roleId required), assignRoleToApiKey(apiKeyId, roleId), generateApiKeyToken(apiKeyId, expiresAt).",
+      "sourceType": "local-check",
+      "refs": [
+        "curl -s -m 20 -X POST http://localhost:3000/metadata -H 'Content-Type: application/json' -d '{\"query\":\"{ __schema { mutationType { fields { name args { name type { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } } } }\"}'",
+        "packages/twenty-server/src/engine/metadata-modules/role/role.resolver.ts:161",
+        "packages/twenty-server/src/engine/core-modules/api-key/api-key.resolver.ts:99",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/agent.resolver.ts:95"
+      ],
+      "evidenceQuote": "assignRoleToApiKey(apiKeyId: UUID!, roleId: UUID!)",
+      "confidence": "high"
+    },
+    {
+      "id": "F07",
+      "subQuestion": "Q3b",
+      "claim": "upsertObjectPermissions and upsertPermissionFlags replace the role's whole set (omitted rows are deleted); upsertFieldPermissions is incremental. createApiKey, assignRoleToApiKey and generateApiKeyToken accept only real user sessions; role upserts, assignRoleToAgent and createOneAgent also accept suitably privileged API keys.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/object-permission/object-permission.service.ts:178",
+        "packages/twenty-server/src/engine/metadata-modules/role-permission-flag/role-permission-flag.service.ts:127",
+        "packages/twenty-server/src/engine/core-modules/api-key/api-key.resolver.ts:172",
+        "packages/twenty-server/src/engine/core-modules/auth/auth.resolver.ts:1144",
+        "packages/twenty-server/src/engine/metadata-modules/role/role.resolver.ts:70"
+      ],
+      "evidenceQuote": "// Binding a role to an API key requires ROLES to prevent privilege escalation.",
+      "confidence": "high"
+    },
+    {
+      "id": "F08",
+      "subQuestion": "Q3b",
+      "claim": "An API key cannot be created without a role (roleId is mandatory); a key with no role target fails closed with API_KEY_NO_ROLE_ASSIGNED. An agent without a role gets no registry (CRM/action) tools, only native model tools such as web search.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/api-key/dtos/create-api-key.input.ts:29",
+        "packages/twenty-server/src/engine/core-modules/api-key/services/api-key-role.service.ts:79",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:359"
+      ],
+      "evidenceQuote": "Registry tools are scoped exclusively by the agent permission-tab role. No role means no registry tools.",
+      "confidence": "high"
+    },
+    {
+      "id": "F09",
+      "subQuestion": "Q3b",
+      "claim": "UI: Settings → Members → Roles → role → Assignment tab has 'Assign to agent' and 'Assign to API key'. An agent's Role tab can create an all-false agent-only role. The New key form preselects the first assignable role (label order, typically Admin).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-front/src/modules/settings/roles/role-assignment/constants/RoleTargetConfig.ts:41",
+        "packages/twenty-front/src/pages/settings/ai/components/SettingsAgentRoleTab.tsx:92",
+        "packages/twenty-front/src/pages/settings/developers/api-keys/SettingsDevelopersApiKeysNew.tsx:48",
+        "packages/twenty-server/src/engine/core-modules/api-key/services/api-key-role.service.ts:182",
+        "https://docs.twenty.com/user-guide/permissions-access/capabilities/permissions",
+        "packages/twenty-docs/user-guide/permissions-access/capabilities/permissions.mdx:179"
+      ],
+      "evidenceQuote": "buttonTitle: () => t`Assign to agent`,",
+      "confidence": "high"
+    },
+    {
+      "id": "F10",
+      "subQuestion": "Q3b",
+      "claim": "Apps declare roles with defineRole(); exactly one defineApplicationRole() becomes the app's default role used by its logic functions and front components; defineAgent({ roleUniversalIdentifier }) binds an agent role, and the SDK build fails if that role exceeds the application role.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/config/roles",
+        "packages/twenty-docs/developers/extend/apps/config/roles.mdx:219",
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/utils/validate-agent-roles-within-application-role.ts:183",
+        "packages/twenty-apps/public/slack/src/agents/slack-assistant.agent.ts:18"
+      ],
+      "evidenceQuote": "Any role you assign to an agent through `roleUniversalIdentifier` on `defineAgent()` must not grant more than the application role",
+      "confidence": "high"
+    },
+    {
+      "id": "F11",
+      "subQuestion": "Q3c",
+      "claim": "AI chat has no agent selection: its tools run with the chatting user's role (intersected with an application's default role when the message comes through an app), re-authorized at every step. Roles assigned to agents are never applied to chat.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat-actor.service.ts:145",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:184",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/chat-execution.service.ts:633",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/resolvers/agent-chat.resolver.ts:159"
+      ],
+      "evidenceQuote": "const rolePermissionConfig = resolveRolePermissionConfig({ authContext, userWorkspaceRoleMap, apiKeyRoleMap: {}, });",
+      "confidence": "high"
+    },
+    {
+      "id": "F12",
+      "subQuestion": "Q3c",
+      "claim": "A workflow AI-agent step builds tools from the agent's role alone ({ intersectionOf: [agentRoleId] }) and only for objects with explicit object-permission rows. The workflow's own role (triggering user, or standard application with Admin fallback) applies to other steps, not to the agent.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:165",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/workflow-actions/ai-agent/ai-agent.workflow-action.ts:139",
+        "packages/twenty-server/src/modules/workflow/workflow-executor/services/workflow-execution-context.service.ts:101",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:154"
+      ],
+      "evidenceQuote": "rolePermissionConfig: buildAgentRolePermissionConfig({ agentRoleId, runAsRoleId, }), requireExplicitObjectGrants: true,",
+      "confidence": "high"
+    },
+    {
+      "id": "F13",
+      "subQuestion": "Q3c",
+      "claim": "runAgent (POST /metadata, caller needs the AI flag) uses the agent's role alone when runAsWorkspaceMemberId is omitted. With runAsWorkspaceMemberId (application tokens only) the member's role replaces the agent's role entirely; the agent role is not intersected.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/utils/build-agent-role-permission-config.util.ts:12",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-run.service.ts:116",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/resolvers/agent-run.resolver.ts:35",
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:212"
+      ],
+      "evidenceQuote": "if (isDefined(runAsRoleId)) { return { intersectionOf: [runAsRoleId] }; }",
+      "confidence": "high"
+    },
+    {
+      "id": "F14",
+      "subQuestion": "Q3c",
+      "claim": "REST, GraphQL and AI tools share the same common query runners. An API key resolves to its single role; a user to their role, intersected with the application's default role when acting through an app; MCP uses { unionOf: [apiKeyRole] } for keys and that intersection for users.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/twenty-orm/utils/resolve-role-ids-from-auth-context.util.ts:19",
+        "packages/twenty-server/src/engine/api/common/common-query-runners/common-base-query-runner.service.ts:359",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:161",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:180"
+      ],
+      "evidenceQuote": "rolePermissionConfig: { unionOf: [apiKeyRoleId] },",
+      "confidence": "high"
+    },
+    {
+      "id": "F15",
+      "subQuestion": "Q3c",
+      "claim": "Enforcement is in the ORM: WorkspaceRepository.onBeforeExecute applies the row policy, then checks object and field read permission for every referenced column, joined relations included. Filters and orderBy on unreadable fields are rejected; REST and AI tools omit unreadable fields from results and schemas.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/twenty-orm/repository/workspace-repository.ts:1968",
+        "packages/twenty-server/src/engine/twenty-orm/repository/permissions.utils.ts:223",
+        "packages/twenty-server/src/engine/api/graphql/graphql-query-runner/graphql-query-parsers/utils/assert-field-is-readable-or-throw.util.ts:9",
+        "packages/twenty-server/src/engine/api/common/common-select-fields/utils/get-all-selectable-fields.util.ts:44",
+        "packages/twenty-server/src/engine/core-modules/record-crud/zod-schemas/record-filter.zod-schema.ts:40"
+      ],
+      "evidenceQuote": "Filtering or ordering by a non-readable field would leak its values (orderBy additionally embeds them into pagination cursors)",
+      "confidence": "high"
+    },
+    {
+      "id": "F16",
+      "subQuestion": "Q3c",
+      "claim": "Bypass in source: navigate_app's navigateToRecord loads id + label of every record of any named object under a system context with shouldBypassPermissionChecks and returns the best fuzzy match. Callable from AI chat and MCP; excluded for workflow and runAgent agents.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool/tools/navigate-tool/navigate-app-tool.ts:344",
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-excluded-tool-names.const.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/constants/ai-chat-excluded-tool-names.const.ts:1",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-excluded-tool-names.const.ts:3"
+      ],
+      "evidenceQuote": "objectNameSingular, { shouldBypassPermissionChecks: true },",
+      "confidence": "high"
+    },
+    {
+      "id": "F17",
+      "subQuestion": "Q3c",
+      "claim": "code_interpreter (needs CODE_INTERPRETER_TOOL or canAccessAllTools) gives its sandbox a 5-minute access token for the triggering user (or app + user), so sandbox code reaches the CRM through MCP with that user's role, not the agent's. Driver defaults to LOCAL when NODE_ENV=development.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool/tools/code-interpreter-tool/code-interpreter-tool.ts:318",
+        "packages/twenty-server/src/engine/core-modules/tool/tools/code-interpreter-tool/code-interpreter-tool.ts:125",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/action-tool.provider.ts:230",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:837"
+      ],
+      "evidenceQuote": "'Code interpreter driver type - LOCAL for development (unsafe), E2B for sandboxed execution',",
+      "confidence": "medium"
+    },
+    {
+      "id": "F18",
+      "subQuestion": "Q3c",
+      "claim": "App logic-function tools (app_*) are offered to any role without a permission-flag check and run with the app's own tokens (application role, or application ∩ triggering user), not the caller's role. Workflow and runAgent agents do not get this tool category at all.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:29",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:340",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service.ts:446",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/workflow-agent-registry-tool-categories.const.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/constants/open-ended-agent-registry-tool-categories.const.ts:3"
+      ],
+      "evidenceQuote": "export const WORKFLOW_AGENT_REGISTRY_TOOL_CATEGORIES: ToolCategory[] = [ ToolCategory.DATABASE_CRUD, ToolCategory.ACTION, ];",
+      "confidence": "high"
+    },
+    {
+      "id": "F19",
+      "subQuestion": "Q3d",
+      "claim": "Row-level predicates require a valid enterprise validity token AND the RLS entitlement (auto-true when billing is off). Otherwise upsertRowLevelPermissionPredicates throws ROW_LEVEL_PERMISSION_FEATURE_DISABLED, predicate queries return empty, and the role UI shows an 'Upgrade to access' card.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/row-level-permission-predicate/services/row-level-permission-predicate.service.ts:559",
+        "packages/twenty-server/src/engine/core-modules/billing/services/billing.service.ts:76",
+        "packages/twenty-front/src/modules/settings/roles/role-permissions/object-level-permissions/record-level-permissions/components/SettingsRolePermissionsObjectLevelRecordLevelSection.tsx:44",
+        "packages/twenty-front/src/modules/settings/roles/role-permissions/object-level-permissions/object-form/components/SettingsRolePermissionsObjectLevelObjectForm.tsx:61"
+      ],
+      "evidenceQuote": "return hasValidEnterprisePlan && isRowLevelPermissionEnabled;",
+      "confidence": "high"
+    },
+    {
+      "id": "F20",
+      "subQuestion": "Q3d",
+      "claim": "Not gated: custom roles, object-level and field-level permissions, permission flags, role assignment to agents and API keys (no entitlement check, no Enterprise header). Enterprise-gated at runtime: RLS, SSO, audit logs (also need ClickHouse), custom AI_PROVIDERS above 25 seats, more than 5 workspaces.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/billing/utils/is-entitlement-active.util.ts:11",
+        "packages/twenty-server/src/engine/core-modules/sso/sso.resolver.ts:53",
+        "packages/twenty-server/src/engine/core-modules/event-logs/event-logs.service.ts:190",
+        "packages/twenty-server/src/engine/core-modules/enterprise/utils/has-custom-ai-provider-access.util.ts:14",
+        "packages/twenty-server/src/engine/core-modules/auth/constants/max-workspaces-without-organization-key.constants.ts:1",
+        "packages/twenty-server/src/engine/core-modules/auth/services/sign-in-up.service.ts:575"
+      ],
+      "evidenceQuote": "hasValidEnterprisePlan && (!isBillingEnabled || stripeEntitlementValue);",
+      "confidence": "high"
+    },
+    {
+      "id": "F21",
+      "subQuestion": "Q3d",
+      "claim": "This build has billing off, no ENTERPRISE_KEY and no validity token (env, DB config, appToken), and no ClickHouse: RLS, SSO and audit logs are unavailable. The seed's 1005 distinct users exceed the 25-seat limit, so custom AI_PROVIDERS entries are dropped.",
+      "sourceType": "local-check",
+      "refs": [
+        "curl -s -m 20 http://localhost:3000/client-config",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT COUNT(DISTINCT \\\"userId\\\") FROM core.\\\"userWorkspace\\\" WHERE \\\"deletedAt\\\" IS NULL\"",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT type, count(*), count(*) FILTER (WHERE \\\"revokedAt\\\" IS NULL) AS active FROM core.\\\"appToken\\\" GROUP BY type\"",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c \"SELECT key, type, (value IS NOT NULL) AS has_value FROM core.\\\"keyValuePair\\\" WHERE type::text ILIKE '%CONFIG%' ORDER BY key\"",
+        "cd /Users/bussss/projects/twenty/packages/twenty-server && grep -E \"^[A-Z_]+=\" .env | cut -d= -f1"
+      ],
+      "evidenceQuote": "\"isBillingEnabled\": false ; isClickHouseConfigured : false ; REFRESH_TOKEN|1|1 (only appToken type) ; 1005",
+      "confidence": "high"
+    },
+    {
+      "id": "F22",
+      "subQuestion": "Q3d",
+      "claim": "451 files carry '@license Enterprise' (391 server, 55 front, 5 shared): billing, enterprise, SSO, record-share, event-logs, usage, row-level predicates (server, front record-level UI, six twenty-orm RLS utils). None in role, object/field-permission, permission-flag, api-key, AI, tool-provider, MCP or workflow modules.",
+      "sourceType": "local-check",
+      "refs": [
+        "cd /Users/bussss/projects/twenty/packages && for p in twenty-server/src twenty-front/src twenty-shared/src; do echo \"$p: $(grep -rl '@license Enterprise' $p --include='*.ts' --include='*.tsx' | wc -l | tr -d ' ')\"; done",
+        "cd /Users/bussss/projects/twenty/packages/twenty-server/src/engine && for d in metadata-modules/role metadata-modules/object-permission metadata-modules/permission-flag metadata-modules/row-level-permission-predicate core-modules/api-key core-modules/record-share core-modules/sso; do echo \"$d total=$(find $d -type f -name '*.ts' | wc -l | tr -d ' ') enterprise=$(grep -rl '@license Enterprise' $d --include='*.ts' | wc -l | tr -d ' ')\"; done",
+        "/Users/bussss/projects/twenty/LICENSE"
+      ],
+      "evidenceQuote": "metadata-modules/row-level-permission-predicate total=20 enterprise=19 ; metadata-modules/object-permission total=12 enterprise=0",
+      "confidence": "high"
+    }
+  ],
+  "docsVsSource": [
+    {
+      "topic": "API key without an assigned role",
+      "docsSay": "\"API keys without an assigned role use default permissions. For tighter security, always assign a specific role to production API keys.\" (repo docs and live page identical)",
+      "sourceSays": "A key cannot be created without a role: CreateApiKeyInput.roleId is non-null (introspection: roleId: UUID!) and the UI form cannot save without one. A key lacking a role target throws API_KEY_NO_ROLE_ASSIGNED in REST, GraphQL, settings guards and MCP. There is no default-permissions fallback.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/permissions-access/capabilities/permissions",
+        "packages/twenty-docs/user-guide/permissions-access/capabilities/permissions.mdx:191",
+        "packages/twenty-server/src/engine/core-modules/api-key/dtos/create-api-key.input.ts:29",
+        "packages/twenty-server/src/engine/core-modules/api-key/services/api-key-role.service.ts:79",
+        "packages/twenty-front/src/pages/settings/developers/api-keys/SettingsDevelopersApiKeysNew.tsx:126"
+      ]
+    },
+    {
+      "topic": "Row-level predicates shipped in an app manifest on a plan without the entitlement",
+      "docsSay": "\"On other plans the predicates declared in an app manifest still sync, they are simply not enforced.\"",
+      "sourceSays": "Manifest sync writes the predicates with no entitlement check, and the query path (resolveRowLevelPermissionRecordFilter -> buildRowLevelPermissionRecordFilter) reads the predicate cache without consulting any entitlement; a source comment says \"Query-time filtering reads the predicate cache and never the entitlement\". Reading suggests synced predicates ARE enforced. Not runtime-verified.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/config/roles",
+        "packages/twenty-docs/developers/extend/apps/config/roles.mdx:172",
+        "packages/twenty-server/src/engine/core-modules/billing-webhook/services/billing-entitlement-sync.service.ts:110",
+        "packages/twenty-server/src/engine/twenty-orm/utils/resolve-row-level-permission-record-filter.util.ts:13",
+        "packages/twenty-server/src/engine/core-modules/application/application-manifest/services/compute-application-manifest-all-universal-flat-entity-maps.service.ts:352"
+      ]
+    },
+    {
+      "topic": "Where a role assigned to an AI agent actually applies",
+      "docsSay": "\"AI agents respect your existing permission structure\" and \"The AI agent will only be able to access data and perform actions allowed by its assigned role.\" The AI permission pages do not mention chat.",
+      "sourceSays": "Agent roles are used only by workflow AI-agent steps, runAgent without runAsWorkspaceMemberId and evaluation runs. AI chat (sendChatMessage has no agent argument) always uses the chatting user's role; runAgent with runAsWorkspaceMemberId uses the member's role instead (that part is stated in the developer docs).",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/capabilities/permissions-access-control",
+        "packages/twenty-docs/user-guide/ai/capabilities/permissions-access-control.mdx:8",
+        "packages/twenty-docs/user-guide/permissions-access/capabilities/permissions.mdx:203",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/services/agent-chat-actor.service.ts:145",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/services/agent-async-executor.service.ts:359"
+      ]
+    },
+    {
+      "topic": "Deleting a role",
+      "docsSay": "\"All roles except the Admin role can be deleted\"; workspace members on a deleted role are reassigned to the default role.",
+      "sourceSays": "The workspace default role cannot be deleted either (DEFAULT_ROLE_CANNOT_BE_DELETED). API keys and agents on the role are also rebound to the default role, and deletion fails when the default role is not assignable to them (Member has canBeAssignedToAgents = canBeAssignedToApiKeys = false), so keys must be revoked and agents reassigned first.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/permissions-access/capabilities/permissions",
+        "packages/twenty-docs/user-guide/permissions-access/capabilities/permissions.mdx:31",
+        "packages/twenty-server/src/engine/metadata-modules/role/role.service.ts:411",
+        "packages/twenty-server/src/engine/metadata-modules/role/role.service.ts:513"
+      ]
+    },
+    {
+      "topic": "Settings menu name and steps for creating an API key",
+      "docsSay": "\"Go to Settings → APIs & Webhooks\" (apis.mdx) / \"Settings → API & Webhooks\" (api.mdx); create-key steps list only Name and Expiration Date.",
+      "sourceSays": "The settings entry is labelled \"MCP & APIs\", and the New key form has a mandatory Role selector preselected to the first assignable role (alphabetical, Admin in the seed).",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/capabilities/apis",
+        "packages/twenty-docs/developers/extend/capabilities/apis.mdx:68",
+        "packages/twenty-docs/developers/extend/api.mdx:40",
+        "packages/twenty-front/src/modules/settings/hooks/useSettingsNavigationItems.tsx:148",
+        "packages/twenty-front/src/pages/settings/developers/api-keys/SettingsDevelopersApiKeysNew.tsx:196"
+      ]
+    },
+    {
+      "topic": "MCP permission model",
+      "docsSay": "\"MCP connections inherit the permissions of the authenticated user (OAuth) or the role assigned to the API key.\"",
+      "sourceSays": "True for the tool catalog and record CRUD (same tool provider and ORM, role resolved in resolveCallerRoles). Exceptions read in source: navigate_app is not in MCP_EXCLUDED_TOOL_NAMES and reads record ids/labels with shouldBypassPermissionChecks, and system objects default to accessible for any role. Not runtime-verified.",
+      "refs": [
+        "https://docs.twenty.com/user-guide/ai/capabilities/mcp",
+        "packages/twenty-docs/user-guide/ai/capabilities/mcp.mdx:115",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:161",
+        "packages/twenty-server/src/engine/api/mcp/constants/mcp-excluded-tool-names.const.ts:3",
+        "packages/twenty-server/src/engine/core-modules/tool/tools/navigate-tool/navigate-app-tool.ts:344"
+      ]
+    }
+  ],
+  "unclear": [
+    {
+      "topic": "System-object exposure for a least-privilege role (messageParticipant, calendarEventParticipant, workspaceMember, messageThread)",
+      "why": "Source gives every role default-true permissions on isSystem objects and only message.find* / calendarEvent.find* have read query hooks, so a Company-only role should still read e.g. messageParticipants (email handles). Read-only phase without credentials: not run. Covered by localTestPlan step 4."
+    },
+    {
+      "topic": "navigate_app bypass reachable with a limited API key over MCP or by a limited user in AI chat",
+      "why": "Established from navigate-app-tool.ts and the exclusion lists only; no token was minted in this phase, so the actual response (record id + display name of a Person for a role without People access) is unobserved."
+    },
+    {
+      "topic": "Whether row-level predicates attached to an agent's own role are applied when the agent runs",
+      "why": "The SQL read filter resolves role ids from the auth context (resolveRoleIdsFromAuthContext in resolve-row-level-permission-record-filter.util.ts:22), not from the rolePermissionConfig carrying the agent role; in agent runs the auth context is the user or the application. Cannot be tested here because RLS is enterprise-gated."
+    },
+    {
+      "topic": "Enforcement of manifest-synced RLS predicates without the entitlement",
+      "why": "Docs say not enforced, source reading says enforced (see docsVsSource). Needs an app that ships rowLevelPermissionPredicates synced into this build; not attempted in a read-only phase."
+    },
+    {
+      "topic": "Full-text search as a side channel for read-restricted fields",
+      "why": "search.service.ts matches on searchVector and selects only id + label columns; I did not trace whether a read-restricted but searchable field is excluded from the vector or from matching, so existence probing through search is not ruled out."
+    },
+    {
+      "topic": "Agent Evals tab / runEvaluationInput tool execution",
+      "why": "run-evaluation-input.job.ts calls executeAgent with no authContext and userWorkspaceId null; dispatchDatabaseCrud then calls buildRequiredToolAuthContext, which throws when userId/userWorkspaceId are missing. Looks like CRM tool calls would fail in evaluation runs, but this was not executed."
+    },
+    {
+      "topic": "Server-side enforcement that an app agent's role stays within the application role",
+      "why": "The check exists in the SDK CLI build (validate-agent-roles-within-application-role.ts); grep found no equivalent in packages/twenty-server application-manifest code, so a manifest produced another way may not be re-validated. Absence by grep only."
+    },
+    {
+      "topic": "code_interpreter sandbox token when nobody triggered the run",
+      "why": "generateSessionToken falls back to userId = userWorkspaceId = workspaceId for automated runs; presumably rejected by token validation, but neither the rejection nor the sandbox MCP helper behaviour was run."
+    },
+    {
+      "topic": "Licence position of Enterprise-header files that run on the default code path",
+      "why": "record-share gate utils and six twenty-orm RLS utils carry '@license Enterprise' yet are imported by the AGPL ORM and execute on every query without any key check. Whether running or modifying them needs a commercial licence is a legal question the code cannot answer."
+    }
+  ],
+  "unstable": [
+    {
+      "item": "RolePermissionConfig.unionOf only supports a single role (multi-role union unimplemented; throws for more than one)",
+      "evidence": "\"Multi-role union is unimplemented and every producer emits one role, so taking the first is exact rather than lossy.\" and \"Union permission logic for multiple roles not yet implemented\"",
+      "refs": [
+        "packages/twenty-server/src/engine/twenty-orm/utils/get-objects-permissions-from-role-permission-config.util.ts:36",
+        "packages/twenty-server/src/engine/twenty-orm/utils/resolve-object-records-permissions.util.ts:40"
+      ]
+    },
+    {
+      "item": "Role deletion rebinds users, API keys and agents outside the migration (TODO)",
+      "evidence": "\"// TODO: Move to migration side effect / To address for rollback of role deletion\"",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/role/role.service.ts:512"
+      ]
+    },
+    {
+      "item": "runAgent input validation is inert",
+      "evidence": "\"TODO(@abdulrahmancodes): install ResolverValidationPipe here; without it every class-validator decorator on RunAgentInputDTO is inert.\"",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent-execution/resolvers/agent-run.resolver.ts:43"
+      ]
+    },
+    {
+      "item": "Record sharing / object readability (OPEN, PRIVATE, INHERITED, APPLICATION, SYSTEM) was reworked in 2.43: the entitlement no longer gates it, but the legacy flag IS_RECORD_SHARING_ENABLED and BillingEntitlementKey.RECORD_SHARING remain, and the gate code is Enterprise-licensed",
+      "evidence": "\"This reads the former entitlement only to preserve historical access; neither the new sharing API nor record authorization depends on it.\"",
+      "refs": [
+        "packages/twenty-server/src/database/commands/upgrade-version-command/2-43/2-43-workspace-command-1790312694997-enable-common-record-sharing.command.ts:92",
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:11",
+        "packages/twenty-server/src/engine/core-modules/record-share/utils/build-record-share-gate.util.ts:1",
+        "packages/twenty-docs/developers/extend/apps/data/objects.mdx:83"
+      ]
+    },
+    {
+      "item": "Automated workflow runs act as the standard application with a fallback to the Admin role (locally neither the Standard nor the Custom application has a defaultRoleId)",
+      "evidence": "\"// In the future we should probably assign the Admin role to the Standard Application\"; local SELECT on core.application shows empty defaultRoleId for Standard and Custom",
+      "refs": [
+        "packages/twenty-server/src/modules/workflow/workflow-executor/services/workflow-execution-context.service.ts:101",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c \"SELECT w.\\\"displayName\\\", a.name, a.\\\"universalIdentifier\\\", r.label AS default_role FROM core.application a JOIN core.workspace w ON w.id = a.\\\"workspaceId\\\" LEFT JOIN core.role r ON r.id = a.\\\"defaultRoleId\\\" ORDER BY 1,2\""
+      ]
+    },
+    {
+      "item": "Dead permission code: CANNOT_ADD_OBJECT_PERMISSION_ON_SYSTEM_OBJECT is declared and mapped but never thrown, so upsertObjectPermissions accepts overrides on system objects (the only way to deny them)",
+      "evidence": "grep over packages/twenty-server/src finds the code only in permissions.exception.ts and the two error-mapping utils",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/permissions/permissions.exception.ts:34",
+        "packages/twenty-server/src/engine/workspace-manager/workspace-migration/workspace-migration-builder/validators/services/flat-object-permission-validator.service.ts:47"
+      ]
+    },
+    {
+      "item": "Code interpreter LOCAL driver is the development default and is labelled unsafe (runs on the server host)",
+      "evidence": "\"Code interpreter driver type - LOCAL for development (unsafe), E2B for sandboxed execution\"; default is LOCAL when NODE_ENV is development, DISABLED otherwise",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:837",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:843"
+      ]
+    },
+    {
+      "item": "Legacy rolePermissionFlag.flag column fallback kept for upgrades",
+      "evidence": "\"The `permissionFlag` relation is stripped during upgrades until the 2.6.0 cursor (@WasIntroducedInUpgrade), so fall back to the legacy `flag` column.\"",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/role/services/workspace-roles-permissions-cache.service.ts:277"
+      ]
+    },
+    {
+      "item": "Deprecated surfaces: /rest/apiKeys (use /rest/metadata/apiKeys) and defaultRoleUniversalIdentifier on defineApplication (use defineApplicationRole)",
+      "evidence": "\"rest/apiKeys is deprecated, use rest/metadata/apiKeys instead\"; docs: \"still supported for backward compatibility, but is deprecated in favor of defineApplicationRole()\"",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/api-key/controllers/api-key.controller.ts:34",
+        "packages/twenty-docs/developers/extend/apps/config/roles.mdx:215",
+        "https://docs.twenty.com/developers/extend/apps/config/roles"
+      ]
+    },
+    {
+      "item": "Documented limitation that may change: workflow-management permission is required to trigger workflows manually",
+      "evidence": "\"Current limitation: Access to workflow management is currently required to manually trigger workflows. This behavior may change in future releases.\"",
+      "refs": [
+        "https://docs.twenty.com/user-guide/permissions-access/capabilities/permissions",
+        "packages/twenty-docs/user-guide/permissions-access/capabilities/permissions.mdx:157"
+      ]
+    },
+    {
+      "item": "Feature flags near this area (no flag gates roles or permissions themselves)",
+      "evidence": "Local values in both workspaces: IS_AI_CHAT_SHARING_DROPDOWN_ENABLED=f, IS_CONVERSATIONS_TAB_ENABLED=f, IS_LOGS_SETTINGS_SECTION_ENABLED=t, IS_VALIDATION_RULES_ENABLED=t",
+      "refs": [
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:1",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c \"SELECT w.\\\"displayName\\\", f.key, f.value FROM core.\\\"featureFlag\\\" f JOIN core.workspace w ON w.id = f.\\\"workspaceId\\\" ORDER BY 1,2\""
+      ]
+    }
+  ],
+  "localTestPlan": [
+    {
+      "goal": "T1 - Get a user token and take a read-only baseline: enterprise flags, and field/object enforcement for the already-seeded limited user tim@apple.dev (role Object-restricted)",
+      "steps": [
+        "mkdir -p /Users/bussss/projects/twenty-playground/permissions && cd /Users/bussss/projects/twenty-playground/permissions (directory does not exist yet; jq is not installed, python3 is)",
+        "Create /Users/bussss/projects/twenty-playground/permissions/pn_gql.py:\nimport json, os, sys, urllib.request, urllib.error\nendpoint, query = sys.argv[1], sys.argv[2]\nheaders = {'Content-Type': 'application/json'}\nif os.environ.get('PN_TOKEN'):\n    headers['Authorization'] = 'Bearer ' + os.environ['PN_TOKEN']\nrequest = urllib.request.Request('http://localhost:3000/' + endpoint, data=json.dumps({'query': query}).encode(), headers=headers)\ntry:\n    print(urllib.request.urlopen(request).read().decode())\nexcept urllib.error.HTTPError as error:\n    print(error.code, error.read().decode())",
+        "Take the seed password from /Users/bussss/projects/twenty/LOCAL-SETUP.md line 68 (do not write it into notes).",
+        "python3 pn_gql.py metadata 'mutation { getLoginTokenFromCredentials(email: \"tim@apple.dev\", password: \"<SEED_PASSWORD>\", origin: \"http://localhost:3002\") { loginToken { token } } }'   -> LOGIN_TOKEN (captcha is not configured locally)",
+        "python3 pn_gql.py metadata 'mutation { getAuthTokensFromLoginToken(loginToken: \"<LOGIN_TOKEN>\", origin: \"http://localhost:3002\") { tokens { accessOrWorkspaceAgnosticToken { token expiresAt } } } }'   -> export PN_TOKEN=<access token> in the shell only (this creates a session + refresh token row, no workspace data)",
+        "python3 pn_gql.py metadata '{ currentWorkspace { displayName billingEntitlements { key value } hasValidSignedEnterpriseKey hasValidEnterpriseValidityToken } }'",
+        "python3 pn_gql.py graphql '{ rockets(first: 1) { edges { node { id } } } }'",
+        "python3 pn_gql.py graphql '{ companies(first: 1) { edges { node { id name linkedinLink { primaryLinkUrl } } } } }'   then repeat without linkedinLink",
+        "python3 pn_gql.py metadata '{ getToolIndex { name category objectName } }'   and list names containing rocket or pet",
+        "python3 pn_gql.py metadata '{ getRoles { id label canBeAssignedToAgents canBeAssignedToApiKeys } }'   (note the Admin role id for T3)"
+      ],
+      "expected": "Workspace Apple; all six billingEntitlements false and both enterprise booleans false. rockets query fails with code FORBIDDEN / subCode PERMISSION_DENIED. The linkedinLink query fails with PERMISSION_DENIED naming the field, the same query without it succeeds. getToolIndex contains no *_rockets tools and only find_/group_by tools for pets (this is the chat tool set for Tim's role, obtained without an LLM key). Record actual results even if different.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "T2 - Create role 'PN Limited': read Company only, Company.address unreadable",
+      "steps": [
+        "COMPANY_ID=$(docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT id FROM core.\"objectMetadata\" WHERE \"workspaceId\" = $$20202020-1c25-4d02-bf25-6aeccf7ea419$$ AND \"nameSingular\" = $$company$$')   # fc225736-4a65-4308-9aaf-3b848b80b79b at research time",
+        "ADDRESS_FIELD_ID=$(docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT id FROM core.\\\"fieldMetadata\\\" WHERE \\\"objectMetadataId\\\" = '$COMPANY_ID' AND name = 'address'\")   # 12487c07-9d18-4e40-b8f6-80946bc64985; address is populated on 599/600 seed companies, employees and tagline are empty, linkedinLink is already hidden from Tim",
+        "python3 pn_gql.py metadata 'mutation { createOneRole(createRoleInput: { label: \"PN Limited\", description: \"PN test role: read Company only\", icon: \"IconLock\", canUpdateAllSettings: false, canAccessAllTools: false, canReadAllObjectRecords: false, canUpdateAllObjectRecords: false, canSoftDeleteAllObjectRecords: false, canDestroyAllObjectRecords: false, canBeAssignedToUsers: false, canBeAssignedToAgents: true, canBeAssignedToApiKeys: true }) { id label } }'   -> ROLE_ID",
+        "python3 pn_gql.py metadata 'mutation { upsertObjectPermissions(upsertObjectPermissionsInput: { roleId: \"<ROLE_ID>\", objectPermissions: [{ objectMetadataId: \"<COMPANY_ID>\", canReadObjectRecords: true, canUpdateObjectRecords: false, canSoftDeleteObjectRecords: false, canDestroyObjectRecords: false }] }) { objectMetadataId canReadObjectRecords canUpdateObjectRecords } }'   (the list replaces the role's whole object-permission set)",
+        "python3 pn_gql.py metadata 'mutation { upsertFieldPermissions(upsertFieldPermissionsInput: { roleId: \"<ROLE_ID>\", fieldPermissions: [{ objectMetadataId: \"<COMPANY_ID>\", fieldMetadataId: \"<ADDRESS_FIELD_ID>\", canReadFieldValue: false, canUpdateFieldValue: false }] }) { id fieldMetadataId canReadFieldValue canUpdateFieldValue } }'",
+        "python3 pn_gql.py metadata '{ getRoles { id label canReadAllObjectRecords objectPermissions { objectMetadataId canReadObjectRecords } fieldPermissions { fieldMetadataId canReadFieldValue } agents { id name } apiKeys { id name } } }'"
+      ],
+      "expected": "Role created with an id; one objectPermission row (company, read true) and one fieldPermission row (address, canReadFieldValue false). No People or Opportunity row is needed because the role-wide read flag is false. UI equivalent: Settings → Members → Roles → + Create Role → Permissions tab → Objects → + Add rule.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "T3 - Create agent 'pn-limited-agent' and assign the role; confirm Admin cannot be assigned to agents",
+      "steps": [
+        "python3 pn_gql.py metadata 'mutation { createOneAgent(input: { name: \"pn-limited-agent\", label: \"PN Limited Agent\", description: \"PN test agent\", prompt: \"You are a test agent. Use only your CRM tools and report exactly what they return.\", modelId: \"workspace-default-model\" }) { id name roleId isCustom } }'   -> AGENT_ID (needs no LLM key: auto-select model ids pass validateModelAvailability)",
+        "Negative check first: python3 pn_gql.py metadata 'mutation { assignRoleToAgent(agentId: \"<AGENT_ID>\", roleId: \"<ADMIN_ROLE_ID>\") }'",
+        "python3 pn_gql.py metadata 'mutation { assignRoleToAgent(agentId: \"<AGENT_ID>\", roleId: \"<ROLE_ID>\") }'",
+        "python3 pn_gql.py metadata '{ findOneAgent(input: { id: \"<AGENT_ID>\" }) { id name roleId } }'",
+        "AGENT_UID=$(docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT \"universalIdentifier\" FROM core.agent WHERE name = $$pn-limited-agent$$ AND \"deletedAt\" IS NULL')   # the Agent GraphQL type does not expose universalIdentifier, runAgent needs it"
+      ],
+      "expected": "Agent created with roleId null; assigning Admin fails with ROLE_CANNOT_BE_ASSIGNED_TO_AGENTS (\"Role \\\"Admin\\\" cannot be assigned to agents\"); assigning PN Limited returns true and findOneAgent shows roleId = ROLE_ID. UI equivalent: Settings → Members → Roles → PN Limited → Assignment → Assign to agent, or the agent's Role tab.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "T4 - Create an API key bound to PN Limited and check REST + GraphQL: People denied, Company.address hidden, plus system-object leak probes",
+      "steps": [
+        "python3 pn_gql.py metadata 'mutation { createApiKey(input: { name: \"pn-limited-key\", expiresAt: \"2026-12-31T00:00:00.000Z\", roleId: \"<ROLE_ID>\" }) { id name expiresAt role { label } } }'   -> KEY_ID (user session required; API keys and playground tokens are refused)",
+        "python3 pn_gql.py metadata 'mutation { generateApiKeyToken(apiKeyId: \"<KEY_ID>\", expiresAt: \"2026-12-31T00:00:00.000Z\") { token } }'   -> PN_KEY shell variable only, never printed into notes",
+        "curl -s -w \"\\n%{http_code}\\n\" \"http://localhost:3000/rest/companies?limit=1\" -H \"Authorization: Bearer $PN_KEY\"   # check the returned company has no address key",
+        "curl -s -w \"\\n%{http_code}\\n\" \"http://localhost:3000/rest/people?limit=1\" -H \"Authorization: Bearer $PN_KEY\"   and the same for /rest/opportunities?limit=1",
+        "PN_TOKEN=$PN_KEY python3 pn_gql.py graphql '{ companies(first: 1) { edges { node { id name } } } }'",
+        "PN_TOKEN=$PN_KEY python3 pn_gql.py graphql '{ companies(first: 1) { edges { node { id name address { addressCity } } } } }'",
+        "PN_TOKEN=$PN_KEY python3 pn_gql.py graphql '{ companies(first: 1, filter: { address: { addressCity: { like: \"%a%\" } } }) { edges { node { id } } } }'",
+        "PN_TOKEN=$PN_KEY python3 pn_gql.py graphql '{ people(first: 1) { edges { node { id name { firstName lastName } } } } }'",
+        "PN_TOKEN=$PN_KEY python3 pn_gql.py graphql '{ companies(first: 1) { edges { node { id people { edges { node { id } } } } } } }'",
+        "Leak probes on system objects: curl -s -w \"\\n%{http_code}\\n\" \"http://localhost:3000/rest/messageParticipants?limit=1\" -H \"Authorization: Bearer $PN_KEY\"   and the same for /rest/workspaceMembers?limit=1 and /rest/calendarEventParticipants?limit=1",
+        "PN_TOKEN=$PN_KEY python3 pn_gql.py metadata '{ getRoles { id label } }'",
+        "Baseline: repeat the /rest/people and /rest/companies calls with Tim's user token (people 200, company includes address). Optional Admin baseline: mint a token for the seeded key with generateApiKeyToken(apiKeyId: \"20202020-f401-4d8a-a731-64d007c27bad\", expiresAt: ...)."
+      ],
+      "expected": "Per source: companies 200 without an address key; people and opportunities 403 with a PERMISSION_DENIED body (distinguish from the 403 'Missing authentication token' seen unauthenticated); GraphQL id/name works, selecting or filtering on address fails with PERMISSION_DENIED, people and the people relation fail with FORBIDDEN / PERMISSION_DENIED; getRoles on /metadata is denied (no ROLES flag). System-object probes are expected to return 200 with data (role defaults to true on isSystem objects) - record honestly whether person-related data (email handles, member names) is visible.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "T5 - MCP with the limited API key: same permission model, plus the navigate_app bypass probe (also a no-LLM proxy for what a runAgent agent with this role can reach)",
+      "steps": [
+        "Unauthenticated baseline already observed: POST http://localhost:3000/mcp returns 401 with WWW-Authenticate: Bearer resource_metadata=\"http://localhost:3000/.well-known/oauth-protected-resource/mcp\"",
+        "curl -s http://localhost:3000/mcp -H \"Authorization: Bearer $PN_KEY\" -H \"Content-Type: application/json\" -H \"Accept: application/json, text/event-stream\" -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{},\"clientInfo\":{\"name\":\"pn-probe\",\"version\":\"0.0.1\"}}}'",
+        "Same curl with -d '{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}'",
+        "Same curl with -d '{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"get_tool_catalog\",\"arguments\":{\"categories\":[\"DATABASE_CRUD\"]}}}'",
+        "Same curl with -d '{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"find_many_people\",\"arguments\":{\"select\":[\"id\",\"name\"],\"limit\":1}}}}'",
+        "Same curl with -d '{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"find_many_companies\",\"arguments\":{\"select\":[\"id\",\"name\",\"address\"],\"limit\":1}}}}'",
+        "Bypass probe: same curl with -d '{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_tool\",\"arguments\":{\"toolName\":\"navigate_app\",\"arguments\":{\"navigation\":{\"type\":\"navigateToRecord\",\"objectNameSingular\":\"person\",\"recordName\":\"Gabriel Robinson\"}}}}}'   (Gabriel Robinson is a seed person)"
+      ],
+      "expected": "Catalog lists find_many_companies / find_one_company / group_by_companies but no *_people or *_opportunities tools; it probably also lists find tools for system objects (message_participants, workspace_members...). find_many_people returns 'Tool \"find_many_people\" not found'. find_many_companies returns records without address plus a warning \"Field 'address' not found on company\". If the navigate_app call returns success with a recordId and 'Navigating to person record \"Gabriel Robinson\"', the restriction did NOT hold for record names/ids - record that plainly.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "T6 - Ask the limited agent for a person's details (the agent-role check; AI chat cannot target an agent)",
+      "steps": [
+        "Stop and ask the user for an LLM provider key first. Configure a catalog provider variable (ANTHROPIC_API_KEY or OPENAI_API_KEY config variable); do not rely on custom AI_PROVIDERS entries, they are dropped above 25 seats without an enterprise key (seed has 1005 users).",
+        "With Tim's token (his role has the AI flag via canAccessAllTools): python3 pn_gql.py metadata 'mutation { runAgent(input: { agentUniversalIdentifier: \"<AGENT_UID>\", prompt: \"Using your CRM tools, find the person named Gabriel Robinson and give me their email and job title. Then list every tool available to you by name.\" }) { success result error } }'",
+        "python3 pn_gql.py metadata 'mutation { runAgent(input: { agentUniversalIdentifier: \"<AGENT_UID>\", prompt: \"Return the name and address city of three companies.\" }) { success result error } }'",
+        "Optional second path: build a workflow with an AI Agent step that selects PN Limited Agent and run it manually; in that path only objects with explicit object-permission rows produce tools."
+      ],
+      "expected": "success true; the answer contains no person email or job title and the tool list has company find/group_by tools but no people or opportunity tools; company names are returned without address. If the agent reaches person data through system-object tools (for example message participants), record it as a leak. runAgent executes synchronously in the request and writes only AI usage events.",
+      "needsLlmKey": true,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "T7 - AI chat restriction for a limited user (chat uses the user's role, so use seeded tim@apple.dev = Object-restricted)",
+      "steps": [
+        "Requires an LLM key and the worker process (yarn start runs it).",
+        "python3 pn_gql.py metadata 'mutation { createChatThread { id } }'   -> THREAD_ID",
+        "MESSAGE_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')",
+        "python3 pn_gql.py metadata 'mutation { sendChatMessage(threadId: \"<THREAD_ID>\", text: \"List three rockets from the CRM, then give me the LinkedIn URL of any company.\", messageId: \"<MESSAGE_ID>\") { messageId queued streamId } }'",
+        "Poll: python3 pn_gql.py metadata '{ chatMessages(threadId: \"<THREAD_ID>\") { role status parts { type textContent toolName toolInput toolOutput errorMessage } } }'",
+        "Optional bypass probe in the same thread: \"Open the rocket named <a seed rocket name>\" and inspect whether a navigate_app tool part returns a recordId.",
+        "Browser alternative: log in at http://localhost:3002 as tim@apple.dev and ask the same in the AI chat panel."
+      ],
+      "expected": "No rocket tools are available and no rocket data is returned; company answers contain no LinkedIn URL (field hidden for Tim's role). A navigate_app result carrying a rocket recordId would show the bypass. Creates one chat thread with messages (note THREAD_ID for cleanup).",
+      "needsLlmKey": true,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "T8 - Confirm row-level permissions are gated in this self-hosted build",
+      "steps": [
+        "python3 pn_gql.py metadata 'mutation { upsertRowLevelPermissionPredicates(input: { roleId: \"<ROLE_ID>\", objectMetadataId: \"<COMPANY_ID>\", predicates: [], predicateGroups: [] }) { predicates { id } predicateGroups { id } } }'",
+        "python3 pn_gql.py metadata '{ getRoles { label rowLevelPermissionPredicates { id } } }'",
+        "docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT count(*) FROM core.\"rowLevelPermissionPredicate\"'"
+      ],
+      "expected": "The mutation is rejected with ROW_LEVEL_PERMISSION_FEATURE_DISABLED (\"Row level permission predicate feature is disabled\") before any write (the gate is the first statement); predicate lists are empty; table count stays 0.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "T9 - Verify the UI click paths and the frontend gating",
+      "steps": [
+        "Log in at http://localhost:3002 as tim@apple.dev.",
+        "Settings → Members → Roles: change the list filter to include agent/API-key roles, open PN Limited → Assignment tab: check the sections with 'Assign to agent' and 'Assign to API key'.",
+        "PN Limited → Permissions tab → Objects → Companies rule: check the field-permission table is editable and the 'Record-level' section shows 'Upgrade to access / This feature is part of the Organization plan'.",
+        "Settings → AI → PN Limited Agent → Role tab: check the assigned role and the 'Create Role' affordance for agents without a role.",
+        "Settings → MCP & APIs → + Create key: check the mandatory Role selector and which role is preselected (do not save).",
+        "Settings → Security: check that SSO is shown as an Organization feature."
+      ],
+      "expected": "Paths exist as named; record-level section and SSO show the upgrade card because currentWorkspace.billingEntitlements RLS is false and hasValidEnterpriseValidityToken is false; the New key form preselects Admin.",
+      "needsLlmKey": false,
+      "needsBrowser": true,
+      "mutatesData": false
+    },
+    {
+      "goal": "T10 - Clean up every PN artefact",
+      "steps": [
+        "Optional negative check while the key is still active and after deleting the agent: python3 pn_gql.py metadata 'mutation { deleteOneRole(roleId: \"<ROLE_ID>\") }'   (expected to fail: default role Member cannot be assigned to API keys)",
+        "python3 pn_gql.py metadata 'mutation { deleteOneAgent(input: { id: \"<AGENT_ID>\" }) { id } }'",
+        "python3 pn_gql.py metadata 'mutation { revokeApiKey(input: { id: \"<KEY_ID>\" }) { id revokedAt } }'",
+        "python3 pn_gql.py metadata 'mutation { deleteOneRole(roleId: \"<ROLE_ID>\") }'",
+        "docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT label FROM core.role WHERE label LIKE $$PN %$$'   and   docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT name, \"revokedAt\" IS NOT NULL FROM core.\"apiKey\" WHERE name LIKE $$pn-%$$'",
+        "Delete the chat thread from T7 in the UI chat history, and remove /Users/bussss/projects/twenty-playground/permissions files that hold tokens."
+      ],
+      "expected": "Agent and role are gone; the API key row remains but revoked (there is no hard-delete mutation for keys, only revoke); no 'PN ' role left. Seeded roles, users and the seeded 'My api key' are untouched.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    }
+  ]
+}

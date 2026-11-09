@@ -1,0 +1,277 @@
+{
+  "area": "MCP server in the self-hosted build (Question 5)",
+  "verdicts": [
+    {
+      "id": "mcp-01",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Opened app.module.ts:68 (McpModule imported with no condition), mcp.module.ts:21-44, mcp-core.controller.ts:39 and ApiPath.ts:17. A grep of engine/api/mcp for config, feature-flag, billing or enterprise checks returned nothing, and the FeatureFlagKey enum has no MCP flag. Local POST /mcp answers 401, so the route is live. The only global gate is WorkspaceNotSuspendedGuard."
+    },
+    {
+      "id": "mcp-02",
+      "verdict": "imprecise",
+      "correctedClaim": "Stateless streamable HTTP on POST /mcp: GET, HEAD and DELETE get 405 with Allow: POST, but OPTIONS is answered 204 by CORS; replies are JSON, or SSE when Accept includes text/event-stream; notifications return 202; protocolVersion is always 2025-06-18; serverInfo Twenty MCP Server 0.1.0.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/api/mcp/middlewares/mcp-method-guard.middleware.ts:14",
+        "packages/twenty-server/src/app.module.ts:134-136",
+        "packages/twenty-server/src/engine/core-modules/user-session/utils/apply-credentialed-cors.util.ts:101-125",
+        "curl -i -s -X OPTIONS http://localhost:3000/mcp -H 'Origin: http://example.com' -H 'Access-Control-Request-Method: POST'   (204, Access-Control-Allow-Origin: *)",
+        "curl -s -I http://localhost:3000/mcp   (405, Allow: POST)",
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:92-130",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:128-137"
+      ],
+      "reason": "All cited refs read as claimed. Local check: GET, HEAD and DELETE return 405 with Allow: POST, but OPTIONS returns 204 from the CORS layer before the middleware runs, so 'other methods get 405' is overstated (this matters for browser-based clients). The server also never negotiates: it ignores the client's protocolVersion and the MCP-Protocol-Version header."
+    },
+    {
+      "id": "mcp-03",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran all five GETs without credentials: each returned 200. The server card shows remotes[0].type streamable-http, url http://localhost:3000/mcp, supportedProtocolVersions [2025-06-18] and version 0.0.0 (FALLBACK_SERVER_VERSION). I first checked by SELECT that the 'Twenty CLI' registration row exists, so the authorization-server GET only read."
+    },
+    {
+      "id": "mcp-04",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Re-ran the POST: HTTP 401, body {\"statusCode\":401,\"error\":\"UnauthorizedException\",\"messages\":[\"Unauthorized\"]} and header WWW-Authenticate: Bearer resource_metadata=\"http://localhost:3000/.well-known/oauth-protected-resource/mcp\", scope=\"api profile\". mcp-auth.guard.ts:24-40 matches."
+    },
+    {
+      "id": "mcp-05",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "Guard config at mcp-core.controller.ts:40-55 and classify-auth-principal.util.ts:34-78 match; oauth.service.ts:328-332 issues client-credentials tokens without a user. Worth keeping: the failure is a JSON-RPC error -32000 inside an HTTP 200 (mcp-protocol.service.ts:479-486) and only for initialize, tools/list and tools/call; ping, prompts/list and resources/list still answer. Workspace-agnostic tokens already fail JwtAuthGuard (401)."
+    },
+    {
+      "id": "mcp-06",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "oauth-registration.controller.ts:42, 93-124 and 146-176 (public client, oAuthClientSecretHash null, only authorization_code and refresh_token), auth.service.ts:540-551 (code_challenge required when there is no secret hash), oauth.service.ts:172-205 (S256 verification), AppPath.ts:37. Locally the discovery document gives authorization_endpoint http://localhost:3002/authorize?iss=... and GET /oauth/authorize returns 404."
+    },
+    {
+      "id": "mcp-07",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "api-key.resolver.ts:81-110, create-api-key.input.ts:29-32, auth.resolver.ts:1144-1168, SettingsApiWebhooks.tsx:145-150 and SettingsDevelopersApiKeysNew.tsx:168-226 read as claimed; my own introspection of /metadata matches. The guards also refuse playground tokens. createApiKey needs API_KEYS_AND_WEBHOOKS (class guard) plus ROLES; generateApiKeyToken needs API_KEYS_AND_WEBHOOKS."
+    },
+    {
+      "id": "mcp-08",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "api-key.resolver.ts:172-205, api-key-role.service.ts:68-87 and 157-162, SettingsDevelopersApiKeyDetail.tsx:112-122; the role Assignment tab (SettingsRoleAssignment.tsx) uses useUpdateApiKeyRole. The class-level guard additionally requires API_KEYS_AND_WEBHOOKS. One role per key is also enforced in the database: UNIQUE (workspaceId, apiKeyId) on core.roleTarget."
+    },
+    {
+      "id": "mcp-09",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "mcp-protocol.service.ts:261-321 builds exactly seven entries. search_help_center is emitted unconditionally by ActionToolProvider (action-tool.provider.ts:187-194), so the list does not vary by role. The spec asserts the list (lines 114-122, 376-381) and the 'Unknown tool: find_many_companies' error (396-398)."
+    },
+    {
+      "id": "mcp-10",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "database-tool.provider.ts:87-90, 149-169, 193, 280 and 416; the five providers check WORKFLOWS, DATA_MODEL, API_KEYS_AND_WEBHOOKS, ROLES and LAYOUTS. For completeness, these are not gated at category level: NAVIGATION_MENU_ITEM, LOGIC_FUNCTION, VIEW read tools (writes need VIEWS), and the ACTION tools search_help_center, navigate_app and save_campaign."
+    },
+    {
+      "id": "mcp-11",
+      "verdict": "imprecise",
+      "correctedClaim": "POST /mcp?mode=direct lists every role-allowed registry tool with its schema plus search_help_center, load_skills, list_object_metadata_names and list_skills, hiding the three meta-tools; tools/call for any name outside the seven base tools is forwarded to execute_tool, while the hidden meta-tools stay callable.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:88",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:427-446",
+        "packages/twenty-server/src/engine/api/mcp/services/mcp-protocol.service.ts:449-475"
+      ],
+      "reason": "The listing part is right. The forwarding rule is not about 'unlisted' names: lines 427-430 forward any name absent from the seven-tool base set, which includes every registry tool that direct mode does list. get_tool_catalog, learn_tools and execute_tool are hidden from the direct listing but are still in that set, so they are called directly."
+    },
+    {
+      "id": "mcp-12",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "mcp-excluded-tool-names.const.ts:3-7 plus output-navigation-tool-names.constant.ts:1-4 give exactly the four names; they are filtered in the catalog, learn_tools, execute_tool, the direct listing and the instructions. mcp-protocol.service.ts:372-391 returns empty prompts and resources and -32601 for anything else."
+    },
+    {
+      "id": "mcp-13",
+      "verdict": "imprecise",
+      "correctedClaim": "Logic functions declaring toolTriggerSettings appear in the MCP catalog as app_<name> (LOGIC_FUNCTION) for every role and dispatch via execute_tool; the integration test only asserts catalog visibility. With an API key (no user) the function runs with the application's own access token.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:29-31",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:82-93",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:340-366",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service.ts:446-499",
+        "packages/twenty-server/test/integration/metadata/suites/application/successful-oauth-only-client-access.integration-spec.ts:213-219",
+        "packages/twenty-docs/developers/extend/apps/logic/logic-functions.mdx:582-593"
+      ],
+      "reason": "The source part holds. The cited test only checks that get_tool_catalog lists app_installed_application_handler; it never calls it through execute_tool. A condition is missing: the category has no permission gate (isAvailable returns true) and dispatch passes only userId and userWorkspaceId, so the caller's role is not applied to what the function does."
+    },
+    {
+      "id": "mcp-14",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "mcp-execute-tool-annotations.const.ts:3-10 (readOnlyHint false, openWorldHint true, destructiveHint false, with the quoted comment) and mcp-protocol.service.ts:462-469, where every registry tool in direct mode gets MCP_EXECUTE_TOOL_ANNOTATIONS."
+    },
+    {
+      "id": "mcp-15",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "mcp-protocol.service.ts:153-163 and 400-402, api-key-role.service.ts:68-87. A key with no role raises ApiKeyException, which is not an HttpException, so it surfaces as JSON-RPC -32603 with the message 'API key <id> has no role assigned'."
+    },
+    {
+      "id": "mcp-16",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "mcp-protocol.service.ts:172-185, resolve-role-ids-for-user.util.ts:3-20, application-install.service.ts:111-120 (OAUTH_ONLY install is skipped) and oauth.service.ts:824-833 (bare application created without defaultRoleId). user-role.service.ts:138-160 throws if the user has no role."
+    },
+    {
+      "id": "mcp-17",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "All seven refs read as claimed: FindRecordsService, the GraphQL find-many resolver and the REST handler all call CommonFindManyQueryRunnerService.execute; the runner builds the repository with rolePermissionConfig (base runner 359-384) and the ORM validates through validateOperationIsPermittedOrThrow. Scope: this is the record path; non-record tools are gated per category by permission flags."
+    },
+    {
+      "id": "mcp-18",
+      "verdict": "imprecise",
+      "correctedClaim": "/mcp needs no permission flag (NoPermissionGuard). CRUD tools are generated for every active object except readability=SYSTEM and the four workflow objects, so isSystem objects (workspaceMember, message, attachment, noteTarget...) get tools; automation-blocked objects lack create/update; deletes are soft; no destroy/restore.",
+      "correctedRefs": [
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:54",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/utils/get-database-crud-tool-flat-objects.util.ts:23-31",
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-agent/utils/__tests__/get-database-crud-tool-flat-objects.util.spec.ts:42-59",
+        "packages/twenty-server/src/engine/metadata-modules/role/services/workspace-roles-permissions-cache.service.ts:161-164",
+        "packages/twenty-server/test/integration/ai/suites/mcp-tool-execution.integration-spec.ts:12",
+        "packages/twenty-server/test/integration/graphql/suites/application-role-intersection/utils/delete-blocklist-entry-through-mcp.util.ts:12-18",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:280",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:245-260",
+        "packages/twenty-shared/src/ai/constants/database-crud-operation.const.ts:1-12",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT count(*), count(*) FILTER (WHERE \\\"isSystem\\\") FROM core.\\\"objectMetadata\\\" WHERE \\\"workspaceId\\\"='20202020-1c25-4d02-bf25-6aeccf7ea419' AND readability <> 'SYSTEM' AND \\\"isActive\\\" AND \\\"nameSingular\\\" NOT IN ('workflow','workflowRun','workflowVersion','workflowAutomatedTrigger');\"   (33|22)"
+      ],
+      "reason": "Four of five parts hold. 'System objects have no tools' is wrong: the filter tests readability, not isSystem, and its unit test keeps isSystem objects with OPEN, PRIVATE, INHERITED or APPLICATION readability. Locally 22 of the 33 CRUD-enabled objects are isSystem (workspaceMembers, messages, calendarEvents, attachments, timelineActivities, noteTargets, blocklists). Twenty's own tests call create_one_note_target and delete_one_blocklist over MCP. Workflows also have a dedicated WORKFLOW tool category."
+    },
+    {
+      "id": "mcp-19",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "tool-registry.service.ts:319-336 resolves against the role-filtered catalog and returns success:false 'Tool \"x\" not found'; mcp-tool-executor.service.ts:108 and 126-130 turn that into isError true. list-object-metadata-names.tool.ts:26-41 and mcp-instruction-builder.service.ts:46-51 use no role filter, so object names also appear in the initialize instructions."
+    },
+    {
+      "id": "mcp-20",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "All six refs read as claimed. Source also settles the stored values: created-by.create-one.pre-query-hook.ts:38 calls injectActorFieldsOnCreate, which keeps a supplied createdBy that has a name and always rebuilds updatedBy from the auth context (actor-from-auth-context.service.ts:129-146), i.e. source API for a key. An opt-in HTTP access log also covers /mcp (see missed)."
+    },
+    {
+      "id": "mcp-21",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "mcp.mdx:10-13 and 120-128 read as claimed. The live page fetched on 2026-10-03 has the same endpoint table and Self-Hosted Configuration text and mentions no plan, billing or feature-flag requirement."
+    },
+    {
+      "id": "mcp-22",
+      "verdict": "confirmed",
+      "correctedClaim": "",
+      "correctedRefs": [],
+      "reason": "mcp.mdx:17-65 and 79-84; the live page is identical. There are two snippets of the same shape (OAuth without headers, API key with an Authorization header), and the ChatGPT row is a UI path rather than a file location."
+    }
+  ],
+  "missed": [
+    {
+      "subQuestion": "Q5d",
+      "claim": "app_* logic-function tools are not role-gated (isAvailable returns true, no permission flag) and receive only userId and userWorkspaceId. For an API-key caller both are undefined, so the function runs with the application's own access token (the app's default role), not the key's role.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:29-31",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/services/tool-executor.service.ts:340-351",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service.ts:446-499",
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:82-89",
+        "packages/twenty-docs/developers/extend/apps/logic/logic-functions.mdx:582"
+      ],
+      "evidenceQuote": "const hasTriggeringPerson = isDefined(userId) && isDefined(userWorkspaceId);"
+    },
+    {
+      "subQuestion": "Q5d",
+      "claim": "Object-level permissions default to true on isSystem objects for every role (workspaceMember, workflow objects and agentChatThread are special-cased). A read-only role's MCP catalog therefore still lists create/update/delete tools for system objects such as noteTarget, attachment, timelineActivity and blocklist; execution can still be denied by inherited-parent or settings checks.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/role/services/workspace-roles-permissions-cache.service.ts:117-222",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:149-169",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/database-tool.provider.ts:280",
+        "packages/twenty-server/src/engine/twenty-orm/repository/workspace-repository.ts:1463-1537"
+      ],
+      "evidenceQuote": ") => overrideValue ?? (isSystem ? true : defaultValue);"
+    },
+    {
+      "subQuestion": "Q5d",
+      "claim": "MCP does not require the AI permission that gates the in-app chat. The chat resolver is guarded by SettingsPermissionGuard(PermissionFlagType.AI) and refuses API keys; /mcp uses NoPermissionGuard and accepts them. A role with canAccessAllTools=false and no AI flag can still use the tool registry, load_skills and list_skills over MCP.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/ai/ai-chat/resolvers/agent-chat.resolver.ts:49-62",
+        "packages/twenty-server/src/engine/metadata-modules/skill/skill.resolver.ts:27-40",
+        "packages/twenty-server/src/engine/api/mcp/controllers/mcp-core.controller.ts:40-55",
+        "packages/twenty-shared/src/constants/ToolPermissionFlags.ts:3-4"
+      ],
+      "evidenceQuote": "SettingsPermissionGuard(PermissionFlagType.AI),"
+    },
+    {
+      "subQuestion": "Q5d",
+      "claim": "An opt-in, env-only access log (API_ACCESS_LOG_ENABLED, default false) covers /mcp: one logfmt line per HTTP request with method, url_path, status, duration, actor kind and id, workspace_id, token_type and trace ids. It does not record the JSON-RPC method, the tool name or the arguments.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/app.module.ts:89-98",
+        "packages/twenty-server/src/engine/middlewares/api-access-log.middleware.ts:15-53",
+        "packages/twenty-server/src/engine/middlewares/utils/build-api-access-log-line.util.ts:26-43",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:1205-1213"
+      ],
+      "evidenceQuote": "'Log one line per API request with the actor, the endpoint and the trace ids',"
+    },
+    {
+      "subQuestion": "Q5b",
+      "claim": "The New key form preselects the first API-key-assignable role in label order. In the seeded Apple workspace the assignable roles are Admin, Impersonate-only and Object-restricted, so a key saved without touching the Role selector is Admin-bound. The seeded key 'My api key' is Admin-bound as well.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-front/src/pages/settings/developers/api-keys/SettingsDevelopersApiKeysNew.tsx:48-62",
+        "packages/twenty-server/src/engine/core-modules/api-key/services/api-key-role.service.ts:179-188",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT label, \\\"canBeAssignedToApiKeys\\\" FROM core.role WHERE \\\"workspaceId\\\"='20202020-1c25-4d02-bf25-6aeccf7ea419' ORDER BY label;\""
+      ],
+      "evidenceQuote": "return { ...prev, roleId: apiKeyAssignableRoles[0].id };"
+    },
+    {
+      "subQuestion": "Q5b",
+      "claim": "Deleting a role rebinds its non-revoked API keys (and its agents and members) to the workspace default role, and is refused when that role cannot be assigned to API keys. Locally the default role is Member (canBeAssignedToApiKeys=false), so a role with an active key cannot be deleted.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/metadata-modules/role/role.service.ts:513-561",
+        "packages/twenty-server/src/engine/metadata-modules/role/role.service.ts:591-602",
+        "packages/twenty-server/src/engine/core-modules/api-key/services/api-key-role.service.ts:222-246",
+        "docker exec twenty_pg psql -U postgres -d default -At -c \"SELECT r.label FROM core.workspace w JOIN core.role r ON r.id = w.\\\"defaultRoleId\\\" WHERE w.id='20202020-1c25-4d02-bf25-6aeccf7ea419';\"   (Member)"
+      ],
+      "evidenceQuote": "`Cannot delete role \"${roleLabel}\": the workspace default role cannot be assigned to ${targetLabel}s.`,"
+    }
+  ],
+  "testPlanIssues": [
+    "Limited-role step 6 is broken in two ways. (a) The grep runs on a single line of JSON, and every group_by_* description contains 'total revenue by company' (database-tool.provider.ts:262), so 'compan' always matches and the whole catalog prints. (b) The expected result 'no create/update/upsert/delete tools' is wrong: object permissions default to true on isSystem objects for every role (workspace-roles-permissions-cache.service.ts:161-164), so a read-only role still lists tools such as create_one_note_target, create_one_attachment and delete_one_timeline_activity. Fix: inspect names instead, e.g. pipe the get_tool_catalog call into python3 -c 'import json,sys; c=json.loads(json.load(sys.stdin)[\"result\"][\"content\"][0][\"text\"])[\"catalog\"].get(\"DATABASE_CRUD\",[]); n=[t[\"name\"] for t in c]; print(\"company:\",[x for x in n if \"compan\" in x]); print(\"write:\",sorted(x for x in n if x.split(\"_\")[0] in (\"create\",\"update\",\"upsert\",\"delete\")))'. Expect the first list empty and the second to contain only system-object tools (no person, opportunity, note or task tools).",
+    "The limited-role test does not probe the places where the restriction is most likely not to hold. Add, all with the limited key: (1) learn_tools with toolNames [create_one_note_target, create_one_attachment, delete_one_blocklist, find_many_workspace_members, find_many_messages, find_many_timeline_activities] and aspects [description], then read notFound; (2) execute_tool for find_many_workspace_members, find_many_messages and find_many_timeline_activities with {limit:1, select:[\"id\"]}; (3) get_tool_catalog with categories [LOGIC_FUNCTION], because app_* tools are not role-gated. Record what comes back rather than a prediction.",
+    "The user TOKEN from getAuthTokensFromLoginToken lives 30 minutes (ACCESS_TOKEN_EXPIRES_IN default '30m', config-variables.ts:348, not overridden in .env). The plan reuses it across four groups. When gql starts returning an authentication error, repeat the two login mutations. Each login also leaves a core.\"userSession\" row, which belongs in the residue list.",
+    "Write step: add the source prediction updatedBySource = API next to createdBySource = AGENT. updatedBy is always rebuilt from the API-key auth context (actor-from-auth-context.service.ts:143-145, build-created-by-from-api-key.util.ts:11), while a supplied createdBy with a name is kept (lines 136-142).",
+    "Cleanup names the wrong failure mode. deleteOneRole does not fail because a revoked key still targets the role: core.roleTarget.roleId is ON DELETE CASCADE and revoked keys are skipped (api-key-role.service.ts:241-243). It fails when the key is still active: the server tries to rebind it to the default role (Member, not assignable to API keys) and throws 'Cannot delete role ... the workspace default role cannot be assigned to API keys' (role.service.ts:536-561, 601). Keep the order revoke then delete, and check revokedAt before deleting.",
+    "The optional OAuth test has no cleanup for the registration and the installed application. Introspection of /metadata shows uninstallApplication(universalIdentifier: String!), deleteApplicationRegistration(id: String!) and revokeApplicationAuthorization(applicationAuthorizationId: UUID!); I did not check their guards. Either try them with the user TOKEN or list the rows as residue. A daily stale-registration cleanup cron exists (30-day grace period); I did not verify what qualifies as stale.",
+    "Step 2 of the limited-role test hardcodes JOBTITLE_FIELD_ID without a lookup command. Add: docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT f.id FROM core.\"fieldMetadata\" f JOIN core.\"objectMetadata\" o ON o.id = f.\"objectMetadataId\" WHERE o.\"workspaceId\" = $$20202020-1c25-4d02-bf25-6aeccf7ea419$$ AND o.\"nameSingular\" = $$person$$ AND f.name = $$jobTitle$$;' (returned fc435b6c-48de-4b90-9bd7-681ab170984e today, matching the plan).",
+    "Path: the user asked for test code under ~/dev/twenty-playground. ~/dev does not exist on this machine (the repo is /Users/bussss/projects/twenty) and the plan uses /Users/bussss/projects/twenty-playground/pn-mcp, which does not exist yet either. State this mapping in the notes or confirm it with the user. The directory is not needed in any case: the plan only defines shell functions and writes no files.",
+    "Inspector: the flags check out against the Inspector repository docs (clients/cli/README.md and docs/cli-smoke-testing.md: --cli, positional URL or --server-url, --transport http|sse, --header, --method, --tool-name, --tool-args-json, --format json, exit code 5 on a tool error, Node >= 22.19; local Node is v24.18.0). They are v2-only. The npm registry reported dist-tags latest 2.9.0 and v1-latest 1.0.2 on 2026-10-03, so pin @modelcontextprotocol/inspector@2 in the npx commands to keep them reproducible.",
+    "Optional simplification: the seeded role 'Object-restricted' is already assignable to API keys (rocket hidden, pet read-only, two field permissions, settings and tools flags on). Binding a second key to it gives an enforcement case with no role setup: find_many_rockets should be 'not found' and create_one_pet absent.",
+    "Verified, no change needed: every GraphQL operation and argument name in the plan matches introspection of /metadata (getLoginTokenFromCredentials, getAuthTokensFromLoginToken, getApiKeyRoles, createApiKey, generateApiKeyToken, createOneRole, upsertObjectPermissions, upsertFieldPermissions, revokeApiKey, deleteOneRole, authorizeApp). The SQL schema, table and column names, the object and field ids and the 600 / 1200 counts match SELECTs. The MCP argument shapes match source (execute_tool {toolName, arguments}; find_many requires select and accepts '*'; delete_one {id}). workspace:generate-api-key takes -w, -n and -e, and dist/command/command.js exists. The unauthenticated curl expectations were re-run and match. In single-workspace mode the login resolves to the Apple seed workspace (workspace-domains.service.ts:87-90).",
+    "Reviewer process note: while checking operation names I wrote two temporary GraphQL-introspection dumps to the session scratchpad and removed them afterwards. Nothing in the repo, the database or the running services was changed. All refs above are relative to /Users/bussss/projects/twenty."
+  ]
+}

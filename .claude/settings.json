@@ -5,6 +5,11 @@
     "pr": "",
     "sessionUrl": false
   },
+  "permissions": {
+    "allow": [
+      "Bash(bash packages/twenty-utils/preview-deploy.sh*)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {

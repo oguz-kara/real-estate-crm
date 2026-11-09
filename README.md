@@ -1,3 +1,5 @@
+> **This fork adds `apps/emlak-app`**, a real estate CRM extension in use at a real estate office. AI turns free-text buyer requests into structured, reviewable records. Phone numbers, e-mails and names are masked before any LLM call. Turkish price, room and district parsing, matching and follow-ups, with an eval set for the extraction. Everything else is upstream [Twenty](https://github.com/twentyhq/twenty).
+
 <p align="center">
   <a href="https://www.twenty.com">
     <img src="./packages/twenty-website/public/images/core/logo.svg" width="100px" alt="Twenty logo" />

@@ -1,0 +1,775 @@
+{
+  "area": "App platform: how apps are defined, installed, and what they can add (Question 1)",
+  "summary": "An app is a TypeScript package built with twenty-sdk: one defineApplication() plus a default role, and one `export default define*()` per file for 26 entity kinds covering data (objects, fields including on standard objects such as Company/Person, indexes, timeline activity types), permissions (roles, permission flags), server logic (logic functions with HTTP-route, cron, database-event, server-route, AI-tool and workflow-action triggers, install/uninstall hooks, health check, agents, skills, connection providers) and UI (front components, views, navigation, command and settings menu items, page layouts, tabs and widgets). It reaches a workspace by live dev sync (`yarn twenty dev` or one-shot `apply`: registration, development application, file upload, `syncApplication` metadata migration, no hooks), by private tarball (`app:publish --private` then `app:install`) or via npm/marketplace (hourly catalog sync of `twenty-app` keyword packages, GitHub-provenance claim); the registration is the instance-wide identity owned by one workspace, and uninstall removes the app's metadata and tables but leaves the registration row. Logic functions run through LOGIC_FUNCTION_TYPE: on this dev instance the default LOCAL driver is an unsandboxed child Node process that inherits the server environment (LAMBDA is the isolated driver, DISABLED the production default), with a 1-900 s timeout and a 1000 executions/minute workspace throttle, while front components run in a Web Worker with a partial DOM. There is a scaffolder (`create-twenty-app`; npm latest is 2.45.0, 2.44.0 is published and pins twenty-sdk/twenty-client-sdk/twenty-ui 2.44.0, built from the same commit as this server) and the `twenty` CLI; the docs' hello world is the scaffold template, and no SDK-versus-server check was found beyond an optional `engines.twenty` range. Against the already-running server on :3000 the scaffolder forces browser OAuth unless ~/.twenty/config.json already holds a valid remote for that URL; the non-interactive route is `twenty remote:add --url http://localhost:3000 --api-key <key> --as <name>` with a key minted locally (`workspace:generate-api-key`, dev/test only) followed by `yarn twenty apply`, and `remote:add --local` will not work because it only probes port 2020. Nothing has been scaffolded or synced yet: this phase was read-only, each seeded workspace holds only the Standard and Custom applications, ~/.twenty and the playground directory do not exist, and in single-workspace mode the instance resolves to the Apple workspace. Apps cannot declaratively ship workflows, webhooks or seed records, add field, widget or trigger types or model providers, or veto writes to standard objects; skills/agents, twenty-ui, front components, timeline activity types, message channels and `twenty pull` are labelled alpha, beta or experimental. Process note: beyond the two allowed check types I ran `yarn -v` once (version print only), one read-only `redis-cli --scan`, read-only git queries, WebFetch calls to registry.npmjs.org, and briefly wrote then deleted one temp file in the session scratchpad; no repository, database or server state was changed.",
+  "findings": [
+    {
+      "id": "Q1a-1",
+      "subQuestion": "Q1a",
+      "claim": "An app is a TypeScript package: the CLI scans every .ts/.tsx file for a top-level `export default define*()` (one entity per file; folders are convention). Minimum is one `defineApplication({universalIdentifier, displayName})` plus a default role via `defineApplicationRole()`.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-build.ts:68",
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-extract-config.ts:129",
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-build.ts:663",
+        "packages/twenty-sdk/src/sdk/define/application/define-application.ts:25"
+      ],
+      "evidenceQuote": "Application must declare a default role: either pass `defaultRoleUniversalIdentifier` to defineApplication() or mark a role file with defineApplicationRole()",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1a-2",
+      "subQuestion": "Q1a",
+      "claim": "26 define* functions exist. Config and data: defineApplication (identity, variables), defineApplicationRole and defineRole (permission sets), definePermissionFlag (custom flag), defineObject (custom table), defineField (field, also on objects you do not own), defineIndex, defineTimelineActivityType (timeline event), defineConnectionProvider (third-party OAuth).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-extract-config.ts:3",
+        "packages/twenty-sdk/src/sdk/define/index.ts:4",
+        "packages/twenty-sdk/src/sdk/define/index.ts:144"
+      ],
+      "evidenceQuote": "DefineConnectionProvider = 'defineConnectionProvider',",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1a-3",
+      "subQuestion": "Q1a",
+      "claim": "Logic and AI: defineLogicFunction (server handler with triggers), definePreInstallLogicFunction, definePostInstallLogicFunction and defineUninstallLogicFunction (lifecycle hooks, at most one each), defineHealthCheck (configuration status, one per app), defineAgent (prompt, modelId, responseFormat, role), defineSkill (reusable instructions).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-extract-config.ts:8",
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-build.ts:624",
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-build.ts:639",
+        "packages/twenty-shared/src/application/agentManifestType.ts:4"
+      ],
+      "evidenceQuote": "Only one health check is allowed per application",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1a-4",
+      "subQuestion": "Q1a",
+      "claim": "UI: defineFrontComponent (sandboxed React component), defineSettingsFrontComponent (deprecated per docs), defineSettingsMenuItem (app settings tab), defineCommandMenuItem (Cmd+K or pinned action), defineNavigationMenuItem (sidebar entry), defineView and defineViewField (saved list views), definePageLayout, definePageLayoutTab, definePageLayoutWidget (record pages, dashboards, standalone pages).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-sdk/src/cli/utilities/build/manifest/manifest-extract-config.ts:19",
+        "packages/twenty-shared/src/application/enums/syncable-entities.enum.ts:1",
+        "packages/twenty-docs/developers/extend/apps/layout/front-components.mdx:137"
+      ],
+      "evidenceQuote": "DefineSettingsMenuItem = 'defineSettingsMenuItem',",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1b-1",
+      "subQuestion": "Q1b",
+      "claim": "Dev sync (`twenty dev`/`apply`) calls createApplicationRegistration, createDevelopmentApplication (sourceType LOCAL), file uploads, then syncApplication, which applies a metadata migration. The registration is the instance-wide identity owned by one workspace; sync is refused unless the caller's workspace owns it.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-sdk/src/cli/operations/dev-once.ts:291",
+        "packages/twenty-server/src/engine/core-modules/application/application-development/application-development.service.ts:87",
+        "packages/twenty-server/src/engine/core-modules/application/application-development/application-development.service.ts:273",
+        "packages/twenty-server/src/engine/core-modules/application/application-registration/application-registration.service.ts:461",
+        "packages/twenty-server/src/engine/core-modules/application/application-registration/application-registration.entity.ts:91"
+      ],
+      "evidenceQuote": "is registered to another workspace. Change the universalIdentifier in your manifest, or transfer the registration from the owning workspace.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1b-2",
+      "subQuestion": "Q1b",
+      "claim": "Tarball (`app:publish --private` then `app:install`) and npm/marketplace installs run: engines.twenty check, file write, pre-install hook, metadata migration plus SDK client generation, post-install hook (queued, 3 retries, unless synchronous); a failed fresh install is uninstalled. LOCAL dev-synced apps skip this, so hooks never run.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/application/application-install/application-install.service.ts:105",
+        "packages/twenty-server/src/engine/core-modules/application/application-install/application-install.service.ts:386",
+        "packages/twenty-server/src/engine/core-modules/application/application-install/application-install.service.ts:397",
+        "packages/twenty-server/src/engine/core-modules/application/application-install/application-install.service.ts:418",
+        "packages/twenty-server/src/engine/core-modules/application/application-install/application-install.service.ts:467",
+        "packages/twenty-server/src/engine/core-modules/application/application-install/application-install.service.ts:667",
+        "packages/twenty-sdk/src/cli/commands/app/index.ts:13"
+      ],
+      "evidenceQuote": "Skipping install for LOCAL app ${appRegistration.universalIdentifier} (files synced by CLI watcher in dev mode)",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1b-3",
+      "subQuestion": "Q1b",
+      "claim": "`twenty app:uninstall` calls uninstallApplication: best-effort uninstall hook, then a migration deleting every metadata entity the app owns (its objects' tables and data go), then the application row and files. The applicationRegistration row stays until deleteApplicationRegistration is called.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/application/application-manifest/application-sync.service.ts:409",
+        "packages/twenty-server/src/engine/core-modules/application/application-manifest/application-sync.service.ts:453",
+        "packages/twenty-server/src/engine/core-modules/application/application-manifest/application-sync.service.ts:467",
+        "packages/twenty-server/src/engine/core-modules/application/application.service.ts:738",
+        "packages/twenty-sdk/src/cli/operations/uninstall.ts:33",
+        "packages/twenty-server/src/engine/core-modules/application/application-registration/application-registration.resolver.ts:281"
+      ],
+      "evidenceQuote": "await this.applicationUninstallService.runUninstallHookBestEffort({",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1c-1",
+      "subQuestion": "Q1c",
+      "claim": "Yes: defineObject creates custom objects (base fields such as id, name, createdAt are added automatically) and defineField adds fields, including relations, to standard objects like Company/Person via objectUniversalIdentifier. Limits: 10 custom indexes per object and no partial indexes.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/data/extending-objects",
+        "packages/twenty-docs/developers/extend/apps/data/extending-objects.mdx",
+        "https://docs.twenty.com/developers/extend/apps/data/objects",
+        "packages/twenty-docs/developers/extend/apps/data/objects.mdx",
+        "https://docs.twenty.com/developers/extend/apps/data/overview",
+        "packages/twenty-docs/developers/extend/apps/data/overview.mdx",
+        "packages/twenty-apps/internal/real-estate/src/fields/person-pre-approved.field.ts:12"
+      ],
+      "evidenceQuote": "`defineField()` is the only way to add fields to objects you didn't create with `defineObject()`.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1c-2",
+      "subQuestion": "Q1c",
+      "claim": "Yes: defineLogicFunction accepts six trigger settings: httpRoute (served under /s/<path>; GET, POST, PUT, PATCH, DELETE), cron, databaseEvent (queued after the write), serverRoute, tool (exposed to AI as `app_<name>`) and workflowAction. Database-event and cron triggers need the worker.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/application/logicFunctionManifestType.ts:11",
+        "packages/twenty-shared/src/application/toolTriggerSettingsType.ts:3",
+        "packages/twenty-server/src/engine/metadata-modules/route-trigger/route-trigger.controller.ts:25",
+        "packages/twenty-server/src/engine/core-modules/tool-provider/providers/logic-function-tool.provider.ts:135",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-trigger/triggers/database-event/call-database-event-trigger-jobs.job.ts:35",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-trigger/triggers/cron/cron-trigger.cron.command.ts:12"
+      ],
+      "evidenceQuote": "// Exposes a logic function as an AI tool (chat / MCP / function calling).",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1c-3",
+      "subQuestion": "Q1c",
+      "claim": "LOGIC_FUNCTION_TYPE selects LOCAL (default when NODE_ENV=development), LAMBDA or DISABLED (default otherwise). LOCAL spawns a child Node process that inherits the server's environment, so it is not a sandbox. Limits: timeoutSeconds 1 to 900 (default 300), 1000 executions per minute per workspace.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:732",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-drivers/drivers/local/services/local-child-process-runner.service.ts:167",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-drivers/drivers/local/services/local-child-process-runner.service.ts:171",
+        "packages/twenty-server/src/engine/metadata-modules/logic-function/logic-function.entity.ts:64",
+        "packages/twenty-server/src/engine/core-modules/application/application-manifest/converters/from-logic-function-manifest-to-universal-flat-logic-function.util.ts:80",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:743"
+      ],
+      "evidenceQuote": "env: { ...cleanProcessEnv, ...cleanUserEnv },",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1c-4",
+      "subQuestion": "Q1c",
+      "claim": "Yes: defineFrontComponent ships React UI running in a Web Worker (Remote DOM), shown in the side panel, page-layout widgets (record pages, dashboards, standalone pages), app settings tabs and AI-chat tool calls; plus command menu items, sidebar items, views. The sandbox DOM is partial.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/layout/front-components",
+        "packages/twenty-docs/developers/extend/apps/layout/front-components.mdx",
+        "https://docs.twenty.com/developers/extend/apps/layout/overview",
+        "packages/twenty-docs/developers/extend/apps/layout/overview.mdx",
+        "packages/create-twenty-app/src/constants/template/src/page-layouts/main-page.page-layout.ts:18"
+      ],
+      "evidenceQuote": "Front components are still under active development. Your code runs against a partial DOM, not a real browser page, so advanced usages can fail, often silently.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1d-1",
+      "subQuestion": "Q1d",
+      "claim": "create-twenty-app takes `[directory]` (lowercase letters, digits, hyphens) plus -n/--name, -d/--display-name, --description, --url (default http://localhost:2020), deprecated --api-url, and --authentication-method oauth|apiKey. It is non-interactive and has no flag to skip dependency install, git init, authentication or the first sync.",
+      "sourceType": "source",
+      "refs": [
+        "packages/create-twenty-app/src/cli.ts:17",
+        "packages/create-twenty-app/src/cli.ts:21",
+        "packages/create-twenty-app/src/cli.ts:24",
+        "packages/create-twenty-app/src/cli.ts:40"
+      ],
+      "evidenceQuote": ".option('--url <url>', 'Twenty server URL (default: http://localhost:2020)')",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1d-2",
+      "subQuestion": "Q1d",
+      "claim": "twenty CLI: dev (watch and sync), plan, apply, pull (experimental), dev:build, dev:typecheck, dev:add, dev:generate-client, dev:function:exec, dev:function:logs, dev:translations-extract, dev:catalog-sync, app:publish [--private], app:install, app:uninstall, docker:start|stop|status|logs|reset|upgrade, remote:add|list|use|status|remove, global -r/--remote. Bare exec, logs, build, deploy are hidden deprecated aliases.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-sdk/src/cli/commands/dev/index.ts:79",
+        "packages/twenty-sdk/src/cli/commands/dev/index.ts:154",
+        "packages/twenty-sdk/src/cli/commands/dev/function/index.ts:38",
+        "packages/twenty-sdk/src/cli/commands/app/index.ts:13",
+        "packages/twenty-sdk/src/cli/commands/docker/index.ts:186",
+        "packages/twenty-sdk/src/cli/commands/remote/index.ts:271",
+        "packages/twenty-sdk/src/cli/commands/deprecated.ts:80",
+        "packages/twenty-sdk/src/cli/cli.ts:19"
+      ],
+      "evidenceQuote": "'Write the installed application back to local source files (experimental)',",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1e-1",
+      "subQuestion": "Q1e",
+      "claim": "The docs' hello world is the scaffolder template (`npx create-twenty-app@latest my-twenty-app`): application config, default role, one front component on a standalone page with a sidebar item, and a health-check function. In-repo examples/hello-world is richer but pins twenty-sdk 2.13.0.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/getting-started/quick-start",
+        "packages/twenty-docs/developers/extend/apps/getting-started/quick-start.mdx",
+        "packages/create-twenty-app/src/constants/template/src/application-config.ts:9",
+        "packages/create-twenty-app/src/constants/template/src/logic-functions/health-check.ts:5",
+        "packages/twenty-apps/examples/hello-world/package.json:25"
+      ],
+      "evidenceQuote": "This generates a TypeScript project in `my-twenty-app/` with a starter `application-config.ts`, a default role, CI/CD workflows, and an integration test.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1e-2",
+      "subQuestion": "Q1e",
+      "claim": "The CLI authenticates with an API key (`twenty remote:add --url <url> --api-key <key> --as <name>`, non-interactive) or OAuth (browser, PKCE, 120 s timeout); credentials live in ~/.twenty/config.json. create-twenty-app with a non-2020 --url forces OAuth unless a stored remote for that URL already validates.",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-sdk/src/cli/commands/remote/index.ts:274",
+        "packages/twenty-sdk/src/cli/operations/login-oauth.ts:76",
+        "packages/twenty-sdk/src/cli/utilities/auth/callback-server.ts:181",
+        "packages/twenty-sdk/src/cli/utilities/config/get-config-path.ts:11",
+        "packages/create-twenty-app/src/create-app.command.ts:60",
+        "packages/create-twenty-app/src/create-app.command.ts:137"
+      ],
+      "evidenceQuote": "API key authentication is only supported on a local Docker instance. Ignoring and switching to OAuth authentication.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1e-3",
+      "subQuestion": "Q1e",
+      "claim": "The dev seeder creates API key 'My api key' (Admin role, Apple workspace only) but no token is stored; the SDK's DEV_API_KEY targets the Docker image. Mint a token with server command `workspace:generate-api-key` (dev/test only), Settings > MCP & APIs, or generateApiKeyToken (user session).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-server/src/engine/workspace-manager/dev-seeder/data/constants/api-key-data-seeds.constant.ts:14",
+        "packages/twenty-server/src/engine/workspace-manager/dev-seeder/core/services/dev-seeder-permissions.service.ts:77",
+        "packages/twenty-sdk/src/cli/constants/dev-api-key.ts:3",
+        "packages/twenty-server/src/engine/core-modules/api-key/commands/generate-api-key.command.ts:29",
+        "packages/twenty-server/src/engine/core-modules/api-key/commands/generate-api-key.command.ts:90",
+        "packages/twenty-server/src/engine/core-modules/auth/auth.resolver.ts:1159",
+        "local-check: docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT k.id, k.name, (SELECT \"displayName\" FROM core.workspace w WHERE w.id = k.\"workspaceId\") FROM core.\"apiKey\" k;' -> 20202020-f401-4d8a-a731-64d007c27bad | My api key | Apple"
+      ],
+      "evidenceQuote": "// Only valid against the local dev Docker image — not a secret.",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1e-4",
+      "subQuestion": "Q1e",
+      "claim": "The scaffolder pins twenty-sdk, twenty-client-sdk and twenty-ui to its own version, so `npx create-twenty-app@2.44.0` matches this server. On npm, `latest` is 2.45.0 and 2.44.0 is published for all four packages; the in-repo scaffolder is not built (no dist).",
+      "sourceType": "source",
+      "refs": [
+        "packages/create-twenty-app/src/constants/template-packages.ts:2",
+        "packages/create-twenty-app/src/utils/app-template.ts:129",
+        "WebFetch https://registry.npmjs.org/-/package/create-twenty-app/dist-tags (latest 2.45.0)",
+        "WebFetch https://registry.npmjs.org/create-twenty-app/2.44.0 , https://registry.npmjs.org/twenty-sdk/2.44.0 , https://registry.npmjs.org/twenty-client-sdk/2.44.0 , https://registry.npmjs.org/twenty-ui/2.44.0 (all exist)",
+        "git -C /Users/bussss/projects/twenty tag --points-at HEAD -> sdk/v2.44.0, twenty/v2.44.0",
+        "ls /Users/bussss/projects/twenty/packages/create-twenty-app/dist -> No such file or directory"
+      ],
+      "evidenceQuote": "version, so the scaffolder pins all of them to its own version.",
+      "confidence": "medium"
+    },
+    {
+      "id": "Q1e-5",
+      "subQuestion": "Q1e",
+      "claim": "No SDK-versus-server version check was found: the CLI only warns on a major mismatch between itself and the app's twenty-sdk dependency. The server validates only the app's `engines.twenty` (absent in the template) against the workspace's completed upgrade version (2.44.0 here).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-sdk/src/cli/utilities/version/check-sdk-version-compatibility.ts:70",
+        "packages/twenty-server/src/engine/core-modules/application/application-development/application-development.service.ts:131",
+        "packages/twenty-server/src/engine/core-modules/application/application-package/application-version-validation.service.ts:83",
+        "packages/twenty-server/src/engine/core-modules/application/application-package/application-version-validation.service.ts:183",
+        "packages/create-twenty-app/src/constants/template/package.json:5",
+        "local-check: docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT name, status FROM core.\"upgradeMigration\" WHERE \"workspaceId\" IS NOT NULL;' -> 2.44.0_RecordPendingFormConversationsCommand_1790772993322 | completed (Apple and YCombinator)"
+      ],
+      "evidenceQuote": "App requires Twenty server ${requiredVersionRange} but this workspace has only completed the upgrade to ${version}.",
+      "confidence": "medium"
+    },
+    {
+      "id": "Q1e-6",
+      "subQuestion": "Q1e",
+      "claim": "The scaffold needs Node ^24.5 and Yarn 4 (packageManager yarn@4.13.0, node-modules linker). The scaffolder runs `corepack enable`, `yarn install --no-immutable`, `git init` plus a commit, then `yarn twenty dev --once`, and opens the app page in the default browser when the sync succeeds.",
+      "sourceType": "source",
+      "refs": [
+        "packages/create-twenty-app/src/constants/template/package.json:11",
+        "packages/create-twenty-app/src/constants/template/yarnrc.yml:1",
+        "packages/create-twenty-app/src/utils/install.ts:74",
+        "packages/create-twenty-app/src/utils/install.ts:84",
+        "packages/create-twenty-app/src/utils/try-git-init.ts:48",
+        "packages/create-twenty-app/src/create-app.command.ts:491",
+        "packages/create-twenty-app/src/create-app.command.ts:166"
+      ],
+      "evidenceQuote": "await execPromise('corepack enable', { cwd: root });",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1e-7",
+      "subQuestion": "Q1e",
+      "claim": "Confirm a loaded app via UI Settings > Applications (Installed tab; Developer tab lists registrations under 'My apps'), GraphQL `findManyApplications { id name universalIdentifier }` on /metadata (authenticated, APPLICATIONS permission), or SQL on core.application. Today each workspace has only Standard and Custom applications.",
+      "sourceType": "local-check",
+      "refs": [
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT a.name, a.\"universalIdentifier\", a.\"sourceType\", a.version FROM core.application a WHERE a.\"workspaceId\" = $$20202020-1c25-4d02-bf25-6aeccf7ea419$$ ORDER BY 1;'",
+        "curl -s -X POST http://localhost:3000/metadata -H 'Content-Type: application/json' -d '{\"query\":\"{ __schema { mutationType { fields { name } } queryType { fields { name } } } }\"}'  (lists findManyApplications, findOneApplication, syncApplication, createDevelopmentApplication, uninstallApplication)",
+        "curl -s -X POST http://localhost:3000/metadata -H 'Content-Type: application/json' -d '{\"query\":\"{ findManyApplications { id name universalIdentifier } }\"}'  (unauthenticated -> UNAUTHENTICATED)",
+        "packages/twenty-server/src/engine/core-modules/application/application-install/application-install.resolver.ts:76",
+        "packages/twenty-front/src/pages/settings/applications/SettingsApplications.tsx:43",
+        "packages/twenty-front/src/pages/settings/applications/tabs/SettingsApplicationsDeveloperTab.tsx:124",
+        "packages/create-twenty-app/src/constants/template/src/__tests__/schema.integration-test.ts:10"
+      ],
+      "evidenceQuote": "Custom | 0945ea51-8ef4-4632-a57a-580112e16306 | local | 1.0.1",
+      "confidence": "high"
+    },
+    {
+      "id": "Q1f-1",
+      "subQuestion": "Q1f",
+      "claim": "The manifest has no entity for workflows, webhooks, seed records, field types, widget types, trigger kinds or AI model providers. Database-event triggers are queued after the write, so apps cannot veto writes to standard data; only app-owned objects/fields can be app-write-only (writability APPLICATION).",
+      "sourceType": "source",
+      "refs": [
+        "packages/twenty-shared/src/application/manifestType.ts:35",
+        "packages/twenty-shared/src/application/enums/syncable-entities.enum.ts:1",
+        "packages/twenty-shared/src/application/logicFunctionManifestType.ts:11",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-trigger/triggers/database-event/call-database-event-trigger-jobs.job.ts:35",
+        "packages/twenty-shared/src/application/objectManifestType.ts:21",
+        "packages/twenty-shared/src/types/MetadataWritability.ts:1"
+      ],
+      "evidenceQuote": "@Processor(MessageQueue.triggerQueue)",
+      "confidence": "medium"
+    },
+    {
+      "id": "Q1f-2",
+      "subQuestion": "Q1f",
+      "claim": "Labelled unstable in docs: skills and agents (alpha), twenty-ui (alpha), timeline activity types (beta), app message channels (beta), `twenty pull` (experimental), front components (under active development, partial DOM). The Marketplace settings tab carries a Beta pill in the front-end source.",
+      "sourceType": "docs",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx",
+        "https://docs.twenty.com/developers/extend/apps/layout/front-components",
+        "packages/twenty-docs/developers/extend/apps/layout/front-components.mdx",
+        "https://docs.twenty.com/developers/extend/apps/data/timeline-activity-types",
+        "packages/twenty-docs/developers/extend/apps/data/timeline-activity-types.mdx",
+        "https://docs.twenty.com/developers/extend/apps/logic/messaging-channels",
+        "packages/twenty-docs/developers/extend/apps/logic/messaging-channels.mdx",
+        "https://docs.twenty.com/developers/extend/apps/operations/sync-and-recovery",
+        "packages/twenty-docs/developers/extend/apps/operations/sync-and-recovery.mdx",
+        "packages/twenty-front/src/pages/settings/applications/SettingsApplications.tsx:41"
+      ],
+      "evidenceQuote": "Skills and agents are currently in alpha. The feature works but is still evolving.",
+      "confidence": "high"
+    }
+  ],
+  "docsVsSource": [
+    {
+      "topic": "`twenty remote:add --local` port auto-detection",
+      "docsSay": "`yarn twenty remote:add --local` connects to a local Twenty server and 'auto-detects port 2020 or 3000' (tagged docs and live docs, checked 2026-10-03).",
+      "sourceSays": "detectLocalServer probes only port 2020 (`const LOCAL_PORTS = [2020];`), so `--local` cannot find the source instance on :3000 and exits with 'No local Twenty server found'. Use `--url http://localhost:3000`.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/operations/cli",
+        "packages/twenty-docs/developers/extend/apps/operations/cli.mdx:113",
+        "packages/twenty-sdk/src/cli/utilities/server/detect-local-server.ts:1",
+        "packages/twenty-sdk/src/cli/commands/remote/index.ts:107"
+      ]
+    },
+    {
+      "topic": "engines.twenty compatibility check when APP_VERSION is not set",
+      "docsSay": "'If the server has no `APP_VERSION` configured, the check is skipped.' (tagged and live docs).",
+      "sourceSays": "The check never reads APP_VERSION: it compares the range with the workspace's completed upgrade version derived from the upgrade cursor in core.upgradeMigration, and a missing cursor yields INVALID_WORKSPACE_VERSION (incompatible), not a skip. Locally APP_VERSION is unset (server card reports version 0.0.0) but the Apple cursor resolves to 2.44.0, so a range such as >=2.44.0 would pass.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/operations/publishing",
+        "packages/twenty-docs/developers/extend/apps/operations/publishing.mdx:121",
+        "packages/twenty-server/src/engine/core-modules/application/application-package/application-version-validation.service.ts:83",
+        "packages/twenty-server/src/engine/core-modules/upgrade/utils/resolve-completed-version-from-cursor.util.ts:9",
+        "local-check: curl -s http://localhost:3000/.well-known/mcp/server-card.json -> \"version\":\"0.0.0\""
+      ]
+    },
+    {
+      "topic": "Sandboxing of logic functions",
+      "docsSay": "App docs: apps 'run on the Twenty platform with full sandboxing and permission controls'; 'Logic functions execute in isolated Node.js processes, sandboxed from the host.'",
+      "sourceSays": "With the LOCAL driver (the default when NODE_ENV=development, i.e. this instance) a function runs in a child Node process spawned with the server's process.env (only NODE_OPTIONS stripped) and with no filesystem or network isolation. Only the LAMBDA driver isolates. The self-host docs agree with source ('no sandboxing').",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/getting-started/concepts",
+        "packages/twenty-docs/developers/extend/apps/getting-started/concepts.mdx:7",
+        "packages/twenty-docs/getting-started/core-concepts/apps.mdx:32",
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-drivers/drivers/local/services/local-child-process-runner.service.ts:167",
+        "https://docs.twenty.com/developers/self-host/capabilities/setup",
+        "packages/twenty-docs/developers/self-host/capabilities/setup.mdx:347"
+      ]
+    },
+    {
+      "topic": "Where a developer's apps are listed in the UI",
+      "docsSay": "Quick start: 'Open http://localhost:2020/settings/applications#developer. You should see your app under **Your Apps**.'",
+      "sourceSays": "The Developer tab section is titled 'My apps' (publishing.mdx also says 'My apps'); the tab is only shown with the API_KEYS_AND_WEBHOOKS permission. On this instance the URL is http://localhost:3002/settings/applications#developer.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/getting-started/quick-start",
+        "packages/twenty-docs/developers/extend/apps/getting-started/quick-start.mdx:84",
+        "packages/twenty-front/src/pages/settings/applications/tabs/SettingsApplicationsDeveloperTab.tsx:124",
+        "packages/twenty-front/src/pages/settings/applications/SettingsApplications.tsx:33"
+      ]
+    },
+    {
+      "topic": "Company object identifier in the defineField example",
+      "docsSay": "Example hard-codes `objectUniversalIdentifier: '701aecb9-eb1c-4d84-9d94-b954b231b64b', // Company object`.",
+      "sourceSays": "Company's universalIdentifier is 20202020-b374-4779-a561-80086cb2e17f (shared constant and the local core.objectMetadata row); the UUID from the docs example was not found in the standard metadata constants. Use STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.company.universalIdentifier, as the same docs page also recommends.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/data/extending-objects",
+        "packages/twenty-docs/developers/extend/apps/data/extending-objects.mdx:14",
+        "packages/twenty-shared/src/metadata/constants/standard-object-universal-identifiers.constant.ts:28",
+        "local-check: docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT \"nameSingular\", \"universalIdentifier\" FROM core.\"objectMetadata\" WHERE \"nameSingular\" = $$company$$;' -> company | 20202020-b374-4779-a561-80086cb2e17f"
+      ]
+    },
+    {
+      "topic": "`twenty plan` on an app that was never synced",
+      "docsSay": "'It also works for an app that was never synced: the server evaluates the manifest against an empty application, so the plan lists everything your source would create.'",
+      "sourceSays": "syncApplication calls findOneOwnedByWorkspaceOrThrow before the dry-run branch, which throws 'No registration found ... Create one first with createApplicationRegistration' when no registration exists, and the CLI plan path returns that error (only `apply` tolerates APPLICATION_NOT_FOUND and goes on to register). The virtual empty application is used only when a registration already exists. Read from source, not yet run locally.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/operations/sync-and-recovery",
+        "packages/twenty-docs/developers/extend/apps/operations/sync-and-recovery.mdx:95",
+        "packages/twenty-server/src/engine/core-modules/application/application-development/application-development.service.ts:146",
+        "packages/twenty-server/src/engine/core-modules/application/application-registration/application-registration.service.ts:452",
+        "packages/twenty-sdk/src/cli/operations/dev-once.ts:236",
+        "packages/twenty-sdk/src/cli/operations/dev-once.ts:282"
+      ]
+    },
+    {
+      "topic": "Scaffolded default role: file path and breadth of access",
+      "docsSay": "roles.mdx shows the scaffolded default role with canReadAllObjectRecords: true and update, soft-delete and destroy all false; application.mdx says the CLI creates it at `src/roles/default-role.ts`.",
+      "sourceSays": "The 2.44.0 template writes `src/default-role.ts` with canReadAllObjectRecords, canUpdateAllObjectRecords and canSoftDeleteAllObjectRecords all true (destroy false), so a freshly scaffolded app's functions can read, update and soft-delete every object.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/config/roles",
+        "packages/twenty-docs/developers/extend/apps/config/roles.mdx:185",
+        "packages/twenty-docs/developers/extend/apps/config/application.mdx:139",
+        "packages/create-twenty-app/src/constants/template/src/default-role.ts:12"
+      ]
+    },
+    {
+      "topic": "examples/hello-world presented as a working example",
+      "docsSay": "roles.mdx links `examples/hello-world/src/roles/default-role.ts` as 'a working example'.",
+      "sourceSays": "That in-repo example pins twenty-sdk and twenty-client-sdk 2.13.0, uses defineRole plus the deprecated defaultRoleUniversalIdentifier, and its README uses the deprecated --api-url flag against port 2020. It is not what the 2.44.0 scaffolder generates.",
+      "refs": [
+        "packages/twenty-docs/developers/extend/apps/config/roles.mdx:227",
+        "packages/twenty-apps/examples/hello-world/package.json:25",
+        "packages/twenty-apps/examples/hello-world/src/application-config.ts:11",
+        "packages/twenty-apps/examples/hello-world/README.md:8"
+      ]
+    },
+    {
+      "topic": "Live docs versus the tagged docs (v2.44.0)",
+      "docsSay": "Live pages quick-start, operations/cli, operations/publishing, operations/sync-and-recovery and logic/skills-and-agents (WebFetch, 2026-10-03) carry the same statements as the tagged .mdx files, including the 'port 2020 or 3000', 'APP_VERSION ... skipped', 'Your Apps' and 'never synced' sentences.",
+      "sourceSays": "No drift between live docs and the tag was found on those five pages, so the discrepancies above are docs-versus-code, not docs-versus-docs. Other pages were not compared.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/getting-started/quick-start",
+        "https://docs.twenty.com/developers/extend/apps/operations/cli",
+        "https://docs.twenty.com/developers/extend/apps/operations/publishing",
+        "https://docs.twenty.com/developers/extend/apps/operations/sync-and-recovery",
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents"
+      ]
+    }
+  ],
+  "unclear": [
+    {
+      "topic": "Scaffold install footprint (size and time)",
+      "why": "No install was allowed in this phase. The template declares 12 devDependencies; the npm registry reports twenty-sdk@2.44.0 at 29.4 MB unpacked (305 files), twenty-ui 2.5 MB and twenty-client-sdk 1.4 MB, but the total node_modules size and install time of a scaffold were not measured. Free disk is about 6.9 GiB (df -h)."
+    },
+    {
+      "topic": "Whether the SDK's built-in DEV_API_KEY is rejected by this instance",
+      "why": "Inferred from source only: the constant is documented as valid only against the Docker dev image, whose APP_SECRET is fixed in packages/twenty-docker/twenty/Dockerfile:308, while this instance has its own APP_SECRET. Not tested because credentialed requests were out of scope for this phase."
+    },
+    {
+      "topic": "OAuth-authorized CLI running as tim@apple.dev",
+      "why": "The server exposes cli_client_id and an authorize endpoint on http://localhost:3002/authorize (checked), but tim@apple.dev holds the seeded 'Object-restricted' role (canUpdateAllSettings = true) rather than Admin, and how an OAuth CLI token's permissions combine with the oauth-only 'Twenty CLI' registration for createApplicationRegistration, syncApplication and file uploads was not traced end to end. The Admin API-key path avoids the question."
+    },
+    {
+      "topic": "`yarn twenty plan` before the first apply",
+      "why": "Docs say it works for a never-synced app; application-development.service.ts:146 and dev-once.ts:236 suggest it fails with 'No registration found' until a registration exists. Needs one local run to settle."
+    },
+    {
+      "topic": "Cron-triggered logic functions on this instance",
+      "why": "Source requires the repeatable job registered by `cron:trigger:start-cron-trigger` (part of `cron:register:all`) plus the worker. LOCAL-SETUP.md does not mention registering crons. One read-only `redis-cli --scan` for bull:cron-queue:* (outside the allowed check list) returned 2 keys and no repeat entries, which suggests crons are not registered; treat this as unverified."
+    },
+    {
+      "topic": "Shipping workflows or seed data with an app",
+      "why": "The manifest has no workflow or record entity (manifestType.ts:35-58). Whether a post-install hook can create workflow/workflowVersion records through CoreApiClient as a workaround was not established, and install hooks do not run at all in dev sync."
+    },
+    {
+      "topic": "Using SDK 2.45.0 (npm latest) against server 2.44.0",
+      "why": "No enforced compatibility check was found and the manifest is accepted as untyped JSON (application.input.ts:8), so the behaviour of a newer SDK against this server is unknown. The SDK changelog's Unreleased section states that deploys to older servers now fail instead of degrading. Pinning 2.44.0 avoids the question."
+    },
+    {
+      "topic": "Running the in-repo packages instead of npm",
+      "why": "packages/create-twenty-app has no dist (it would need an nx build, not allowed here). packages/twenty-sdk/dist/cli.cjs exists but was not executed, and consuming the in-repo SDK from an app outside the monorepo (portal: or link:) was not established. It is not needed because 2.44.0 is on npm and HEAD carries both the twenty/v2.44.0 and sdk/v2.44.0 tags."
+    },
+    {
+      "topic": "Which workspace counts as the throwaway workspace",
+      "why": "IS_MULTIWORKSPACE_ENABLED is false (public /client-config), so host-based resolution always returns the Apple seed workspace (workspace-domains.service.ts:83) and the seeded API key belongs to Apple. YCombinator exists and an API key minted for it would target it over the API, but whether its UI is reachable in single-workspace mode was not established; creating a brand-new workspace needs multi-workspace mode per LOCAL-SETUP.md."
+    },
+    {
+      "topic": "npm/marketplace install path on this instance",
+      "why": "publicMarketplaceApps returned [] for both isVetted values (catalog empty) and only three registrations exist (two 'Custom', one oauth-only 'Twenty CLI'). The catalog sync (hourly cron or the syncMarketplaceCatalog mutation) and a marketplace install were not exercised; triggering a sync would import public npm registrations into the instance."
+    },
+    {
+      "topic": "`twenty dev` watch mode from a non-TTY shell",
+      "why": "dev renders an Ink terminal UI and disables interactivity when stdout is not a TTY (commands/dev/dev.ts:81); only `apply` and `plan` are documented for scripts. Not run. `dev:add` is interactive (inquirer prompts), so entity files should be written by hand in automation."
+    },
+    {
+      "topic": "Path naming in the user request",
+      "why": "The request refers to ~/dev/twenty and ~/dev/twenty-playground; on this machine ~/dev does not exist, the repo is /Users/bussss/projects/twenty and neither /Users/bussss/projects/twenty-playground nor ~/.twenty exists yet. The notes file and playground paths have to follow the real location."
+    },
+    {
+      "topic": "Process deviations in this read-only phase",
+      "why": "Beyond unauthenticated curl and SELECT-only SQL I ran: `yarn -v` once (prints the Yarn version; no install, nothing written), one read-only `docker exec twenty_redis redis-cli --scan --pattern 'bull:cron-queue:*'`, read-only git queries (`git tag --points-at HEAD`, `git describe --tags`, `git status --porcelain`), WebFetch requests to registry.npmjs.org for package metadata, and I wrote one temporary JSON file (GraphQL introspection output) into the session scratchpad and deleted it immediately. Nothing in the repo, database, Redis, ~/.twenty or the playground was created or changed; git status shows only the pre-existing untracked LOCAL-SETUP.md."
+    }
+  ],
+  "unstable": [
+    {
+      "item": "Skills and agents (defineSkill, defineAgent, runAgent) are alpha",
+      "evidence": "Docs warning: 'Skills and agents are currently in alpha. The feature works but is still evolving.'",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/skills-and-agents",
+        "packages/twenty-docs/developers/extend/apps/logic/skills-and-agents.mdx:8"
+      ]
+    },
+    {
+      "item": "Front components are under active development (partial DOM)",
+      "evidence": "Docs warning plus a 'Current limitations' section: ResizeObserver and IntersectionObserver are absent, portals to document.body and canvas render nothing, document/window listeners never fire, component CSS is injected into the host page unscoped, and most gaps fail silently.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/layout/front-components",
+        "packages/twenty-docs/developers/extend/apps/layout/front-components.mdx:10",
+        "packages/twenty-docs/developers/extend/apps/layout/front-components.mdx:896"
+      ]
+    },
+    {
+      "item": "twenty-ui component library is alpha",
+      "evidence": "'`twenty-ui` is still in alpha ... APIs and component behavior may change between releases.' The scaffold template's welcome component imports it.",
+      "refs": [
+        "packages/twenty-docs/developers/extend/apps/layout/front-components.mdx:796",
+        "packages/create-twenty-app/src/constants/template/src/front-components/main-page.tsx:3"
+      ]
+    },
+    {
+      "item": "Timeline activity types are beta",
+      "evidence": "'Timeline activity types are in beta, the API can evolve while we learn from app developers' use cases.'",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/data/timeline-activity-types",
+        "packages/twenty-docs/developers/extend/apps/data/timeline-activity-types.mdx:10"
+      ]
+    },
+    {
+      "item": "App-owned message channels are beta and may not be live",
+      "evidence": "'Beta — and possibly not live on your instance yet.' The page also states channels cannot send outbound messages yet.",
+      "refs": [
+        "https://docs.twenty.com/developers/extend/apps/logic/messaging-channels",
+        "packages/twenty-docs/developers/extend/apps/logic/messaging-channels.mdx:12",
+        "packages/twenty-docs/developers/extend/apps/logic/messaging-channels.mdx:213"
+      ]
+    },
+    {
+      "item": "`twenty pull` is experimental",
+      "evidence": "Docs and the CLI description both say experimental; it does not export logic functions, front components, skills, agents, command or settings menu items, connection providers or application variables, and a pruning apply after a pull would delete them.",
+      "refs": [
+        "packages/twenty-docs/developers/extend/apps/operations/sync-and-recovery.mdx:101",
+        "packages/twenty-docs/developers/extend/apps/operations/sync-and-recovery.mdx:132",
+        "packages/twenty-sdk/src/cli/commands/dev/index.ts:154"
+      ]
+    },
+    {
+      "item": "Marketplace tab is marked Beta in the UI",
+      "evidence": "The Marketplace tab of Settings > Applications is rendered with pill: t`Beta`.",
+      "refs": [
+        "packages/twenty-front/src/pages/settings/applications/SettingsApplications.tsx:41"
+      ]
+    },
+    {
+      "item": "SDK and server are tightly version-coupled and change fast",
+      "evidence": "The SDK CHANGELOG 'Unreleased' section lists Breaking Changes (MetadataApiClient.uploadFile signature) and removed fallbacks ('deploying to a server older than the direct upload fails instead of degrading'). npm latest is already 2.45.0 while this server is 2.44.0, and in-repo apps pin SDK versions from 2.13.0 to 2.42.0.",
+      "refs": [
+        "packages/twenty-sdk/CHANGELOG.md:7",
+        "packages/twenty-sdk/CHANGELOG.md:31",
+        "packages/twenty-apps/examples/hello-world/package.json:25",
+        "WebFetch https://registry.npmjs.org/-/package/twenty-sdk/dist-tags (latest 2.45.0)"
+      ]
+    },
+    {
+      "item": "Deprecated surfaces still present (some still used by the tooling)",
+      "evidence": "`twenty dev --once` and `--dry-run` are deprecated, yet the scaffolder still spawns `yarn twenty dev --once`. Also marked deprecated: defaultRoleUniversalIdentifier, --api-url, defineSettingsFrontComponent, enqueueJob, view `key` and `openRecordIn`, defineField({isUnique}), the uploadApplicationFile and installMarketplaceApp mutations, and server-route URLs addressed by universalIdentifier.",
+      "refs": [
+        "packages/twenty-sdk/src/cli/commands/dev/index.ts:52",
+        "packages/create-twenty-app/src/create-app.command.ts:491",
+        "packages/twenty-sdk/src/sdk/define/application/application-config.ts:15",
+        "packages/twenty-server/src/engine/core-modules/application/application-development/application-development.resolver.ts:111",
+        "packages/twenty-server/src/engine/core-modules/application/application-install/application-install.resolver.ts:112",
+        "packages/twenty-docs/developers/extend/apps/logic/background-jobs.mdx:38",
+        "packages/twenty-docs/developers/extend/apps/layout/views.mdx:37",
+        "packages/twenty-docs/developers/extend/apps/data/overview.mdx:81",
+        "packages/twenty-docs/developers/extend/apps/logic/logic-functions.mdx:300"
+      ]
+    },
+    {
+      "item": "Feature flag IS_LOGIC_FUNCTION_PREBUILT_MODE_ENABLED gates the PREBUILT execution mode",
+      "evidence": "The executor falls back to LIVE unless the flag is enabled; the flag has no row in the local core.featureFlag table (existing logic functions show executionMode LIVE).",
+      "refs": [
+        "packages/twenty-server/src/engine/core-modules/logic-function/logic-function-executor/logic-function-executor.service.ts:254",
+        "packages/twenty-shared/src/types/FeatureFlagKey.ts:9",
+        "local-check: docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT key, value FROM core.\"featureFlag\";'"
+      ]
+    },
+    {
+      "item": "LOCAL logic-function driver is development-only and unsandboxed",
+      "evidence": "Self-host docs: the local driver 'runs code directly on the host in a Node.js process with no sandboxing'. The default is LOCAL only when NODE_ENV=development and DISABLED otherwise, so a production self-host needs LAMBDA (AWS) for isolation.",
+      "refs": [
+        "https://docs.twenty.com/developers/self-host/capabilities/setup",
+        "packages/twenty-docs/developers/self-host/capabilities/setup.mdx:347",
+        "packages/twenty-server/src/engine/core-modules/twenty-config/config-variables.ts:732"
+      ]
+    },
+    {
+      "item": "Documented 'not yet' gaps",
+      "evidence": "USER-scope settings menu items 'are not displayed yet'; RECORD_FORM page layouts do 'not render record forms yet'; background job priority 'is not configurable yet'.",
+      "refs": [
+        "packages/twenty-docs/developers/extend/apps/layout/front-components.mdx:131",
+        "packages/twenty-docs/developers/extend/apps/layout/page-layouts.mdx:56",
+        "packages/twenty-docs/developers/extend/apps/logic/background-jobs.mdx:110"
+      ]
+    },
+    {
+      "item": "Stale TODO in the CLI config migration",
+      "evidence": "'TODO: Remove after 2026-04-30 — migrates legacy config format' is still present at tag 2.44.0 (today is 2026-10-03).",
+      "refs": [
+        "packages/twenty-sdk/src/cli/utilities/config/config-service.ts:61"
+      ]
+    }
+  ],
+  "localTestPlan": [
+    {
+      "goal": "Mint a local Admin API key for the Apple workspace (no browser) so the CLI can authenticate non-interactively, and check that the SDK's built-in DEV_API_KEY is not valid here",
+      "steps": [
+        "curl -s http://localhost:3000/healthz   # expect status ok; the worker started by `npx nx start` must also be running",
+        "mkdir -p /Users/bussss/projects/twenty-playground",
+        "cd /Users/bussss/projects/twenty && NO_COLOR=1 npx nx run twenty-server:command-no-deps -- workspace:generate-api-key -w 20202020-1c25-4d02-bf25-6aeccf7ea419 -n \"PN cli key\" 2>&1 | grep -o 'TOKEN:[A-Za-z0-9._-]*' | head -1 | cut -d: -f2- > /Users/bussss/projects/twenty-playground/.pn-twenty-api-key && chmod 600 /Users/bussss/projects/twenty-playground/.pn-twenty-api-key",
+        "Note: this is the same invocation the repo's CI uses (.github/workflows/ci-cross-version-upgrade.yaml:258); equivalent without nx: (cd packages/twenty-server && NO_COLOR=1 node dist/command/command.js workspace:generate-api-key -w <workspaceId> -n \"PN cli key\"). It creates a new apiKey row with the Admin role and only works when NODE_ENV is development or test. Never print the token. It is a locally minted Twenty workspace key, not a third-party or LLM key: check with the user first if their 'ask before using an API key' rule is meant to cover it. Browser alternative: http://localhost:3002/settings/mcp-apis > create an API key.",
+        "curl -s -X POST http://localhost:3000/metadata -H \"Authorization: Bearer $(cat /Users/bussss/projects/twenty-playground/.pn-twenty-api-key)\" -H 'Content-Type: application/json' -d '{\"query\":\"{ currentWorkspace { id displayName } }\"}'",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT k.name, r.label FROM core.\"apiKey\" k JOIN core.\"roleTarget\" rt ON rt.\"apiKeyId\" = k.id AND rt.\"workspaceId\" = k.\"workspaceId\" JOIN core.role r ON r.id = rt.\"roleId\" WHERE k.name LIKE $$PN %$$;'",
+        "Optional negative check: DEV=$(grep -o 'eyJ[A-Za-z0-9._-]*' /Users/bussss/projects/twenty/packages/twenty-sdk/src/cli/constants/dev-api-key.ts | head -1); curl -s -X POST http://localhost:3000/metadata -H \"Authorization: Bearer $DEV\" -H 'Content-Type: application/json' -d '{\"query\":\"{ currentWorkspace { id } }\"}'"
+      ],
+      "expected": "currentWorkspace returns id 20202020-1c25-4d02-bf25-6aeccf7ea419 with displayName Apple; the SQL prints `PN cli key | Admin`; the request with the SDK's DEV_API_KEY returns an authentication error (per source it is signed for the Docker image's fixed APP_SECRET).",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Docs-faithful hello world: scaffold with create-twenty-app pinned to 2.44.0 and let it sync into the running server at http://localhost:3000 (run this OR the next test, not both)",
+      "steps": [
+        "cd /Users/bussss/projects/twenty-playground && export COREPACK_ENABLE_DOWNLOAD_PROMPT=0",
+        "npx -y -p twenty-sdk@2.44.0 twenty remote:add --url http://localhost:3000 --api-key \"$(cat .pn-twenty-api-key)\" --as pn-local   # writes ~/.twenty/config.json so the scaffolder reuses these credentials instead of starting browser OAuth (create-app.command.ts:137)",
+        "npx -y create-twenty-app@2.44.0 pn-hello-world --display-name \"PN Hello World\" --description \"PN scratch app\" --url http://localhost:3000",
+        "Side effects of the scaffolder to expect: `corepack enable` (the yarn and pnpm shims already exist in the nvm bin dir, so no effective change), `yarn install --no-immutable`, `git init` plus an initial commit inside pn-hello-world, `yarn twenty dev --once`, then it opens http://localhost:3002/page/<pageLayoutId> in the default browser. Without the pre-seeded remote it instead opens http://localhost:3002/authorize and waits up to 120 s.",
+        "cd pn-hello-world && grep -E '\"twenty-(sdk|client-sdk|ui)\"' package.json && yarn twenty remote:status",
+        "Only if the scaffolder printed 'Skipped (server or authentication not available)' or 'Sync failed': yarn twenty remote:add --url http://localhost:3000 --api-key \"$(cat ../.pn-twenty-api-key)\" --as pn-local && yarn twenty apply"
+      ],
+      "expected": "The scaffolder ends with 'Application created successfully!'; package.json pins twenty-sdk, twenty-client-sdk and twenty-ui to 2.44.0; remote:status shows Server http://localhost:3000 and 'api-key (valid)'; the application 'PN Hello World' is synced (verified by the SQL/GraphQL test below). A browser tab is opened by the tool but no interaction is needed.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Quiet alternative to the scaffolder: copy the 2.44.0 template from the repo checkout and sync with plan/apply (no browser, no git init, no corepack call); also settles the docs-vs-source question about `plan` on a never-synced app",
+      "steps": [
+        "PG=/Users/bussss/projects/twenty-playground; T=/Users/bussss/projects/twenty/packages/create-twenty-app/src/constants/template; cp -R \"$T\" \"$PG/pn-hello-world\" && cd \"$PG/pn-hello-world\" && mv gitignore .gitignore && mv github .github && mv yarnrc.yml .yarnrc.yml && cp AGENTS.md CLAUDE.md",
+        "node -e 'const fs=require(\"fs\"),c=require(\"crypto\");const p=\"src/constants/universal-identifiers.ts\";fs.writeFileSync(p,fs.readFileSync(p,\"utf8\").replace(\"DISPLAY-NAME-TO-BE-GENERATED\",\"PN Hello World\").replace(\"DESCRIPTION-TO-BE-GENERATED\",\"PN scratch app\").replace(/UUID-TO-BE-GENERATED/g,()=>c.randomUUID()));const j=JSON.parse(fs.readFileSync(\"package.json\",\"utf8\"));j.name=\"pn-hello-world\";for(const k of [\"twenty-client-sdk\",\"twenty-sdk\",\"twenty-ui\"])j.devDependencies[k]=\"2.44.0\";fs.writeFileSync(\"package.json\",JSON.stringify(j,null,2));'   # mirrors packages/create-twenty-app/src/utils/app-template.ts",
+        "COREPACK_ENABLE_DOWNLOAD_PROMPT=0 yarn install",
+        "yarn twenty remote:add --url http://localhost:3000 --api-key \"$(cat ../.pn-twenty-api-key)\" --as pn-local && yarn twenty remote:status",
+        "yarn twenty plan; echo \"plan exit=$?\"   # run BEFORE the first apply",
+        "yarn twenty apply && yarn twenty plan"
+      ],
+      "expected": "remote:add prints '✓ Remote \"pn-local\" added (http://localhost:3000) via API key.'; the first plan is expected from source to fail with 'No registration found for ...' (docs say it should work: record which one holds); apply prints the plan and '✓ Synced PN Hello World (N files)'; the second plan reports nothing to add, change or destroy.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Confirm the app loaded, over SQL and GraphQL",
+      "steps": [
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT a.name, a.\"universalIdentifier\", a.\"sourceType\", a.version FROM core.application a WHERE a.\"workspaceId\" = $$20202020-1c25-4d02-bf25-6aeccf7ea419$$ ORDER BY 1;'",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT r.name, r.\"sourceType\", (r.\"workspaceId\" = $$20202020-1c25-4d02-bf25-6aeccf7ea419$$) AS owned_by_apple FROM core.\"applicationRegistration\" r ORDER BY 1;'",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT a.name, (SELECT count(*) FROM core.\"frontComponent\" f WHERE f.\"applicationId\"=a.id) AS front_components, (SELECT count(*) FROM core.\"logicFunction\" l WHERE l.\"applicationId\"=a.id) AS logic_functions, (SELECT count(*) FROM core.\"pageLayout\" p WHERE p.\"applicationId\"=a.id) AS page_layouts, (SELECT count(*) FROM core.\"navigationMenuItem\" n WHERE n.\"applicationId\"=a.id) AS nav_items, (SELECT count(*) FROM core.role ro WHERE ro.\"applicationId\"=a.id) AS roles FROM core.application a WHERE a.\"workspaceId\" = $$20202020-1c25-4d02-bf25-6aeccf7ea419$$ ORDER BY 1;'",
+        "curl -s -X POST http://localhost:3000/metadata -H \"Authorization: Bearer $(cat /Users/bussss/projects/twenty-playground/.pn-twenty-api-key)\" -H 'Content-Type: application/json' -d '{\"query\":\"{ findManyApplications { id name universalIdentifier version } }\"}'"
+      ],
+      "expected": "A third application row `PN Hello World | <uuid> | local | 0.1.0` in the Apple workspace (baseline measured today: only `Custom` and `Standard`, both local 1.0.1); a 'PN Hello World' registration row with sourceType local and owned_by_apple = t; for the app 1 front component, 1 logic function (health-check), 1 page layout, 1 navigation item and 1 role; findManyApplications lists it.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Confirm the app in the UI",
+      "steps": [
+        "Open http://localhost:3002 and sign in as tim@apple.dev (credentials are prefilled; Apple workspace).",
+        "Open http://localhost:3002/settings/applications#installed and check that 'PN Hello World' is listed; open it and look at the About tab.",
+        "Open http://localhost:3002/settings/applications#developer and check that the 'My apps' table lists 'PN Hello World' (the docs call this section 'Your Apps'); click it to see the registration, then 'View installed app'.",
+        "In the left sidebar click the 'PN Hello World' item: the standalone page should render the front component with the text 'Was installed successfully.'"
+      ],
+      "expected": "The app appears in the Installed tab and under 'My apps' in the Developer tab, and its welcome page renders from the sidebar entry, which proves the front component, page layout and navigation item all loaded.",
+      "needsLlmKey": false,
+      "needsBrowser": true,
+      "mutatesData": false
+    },
+    {
+      "goal": "Verify an app can add a custom object, a field on the standard Company object, an HTTP-route logic function and an AI-tool logic function",
+      "steps": [
+        "Write the file /Users/bussss/projects/twenty-playground/pn-add-entities.mjs with exactly this content:\nimport { mkdirSync, writeFileSync } from 'node:fs';\nimport { dirname } from 'node:path';\nimport { randomUUID as u } from 'node:crypto';\n\nconst write = (path, source) => {\n  mkdirSync(dirname(path), { recursive: true });\n  writeFileSync(path, source);\n};\nconst nameFieldId = u();\n\nwrite('src/objects/pn-case.object.ts', `import { defineObject, FieldType } from 'twenty-sdk/define';\n\nexport default defineObject({\n  universalIdentifier: '${u()}',\n  nameSingular: 'pnCase',\n  namePlural: 'pnCases',\n  labelSingular: 'PN Case',\n  labelPlural: 'PN Cases',\n  icon: 'IconBox',\n  labelIdentifierFieldMetadataUniversalIdentifier: '${nameFieldId}',\n  fields: [\n    { universalIdentifier: '${nameFieldId}', type: FieldType.TEXT, name: 'name', label: 'Name', icon: 'IconAbc' },\n  ],\n});\n`);\n\nwrite('src/fields/pn-company-risk-note.field.ts', `import { defineField, FieldType, STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS } from 'twenty-sdk/define';\n\nexport default defineField({\n  universalIdentifier: '${u()}',\n  objectUniversalIdentifier: STANDARD_OBJECT_UNIVERSAL_IDENTIFIERS.company.universalIdentifier,\n  type: FieldType.TEXT,\n  name: 'pnRiskNote',\n  label: 'PN Risk Note',\n  icon: 'IconAbc',\n});\n`);\n\nwrite('src/logic-functions/pn-hello-route.ts', `import { defineLogicFunction } from 'twenty-sdk/define';\n\nconst handler = async (): Promise<{ message: string }> => ({ message: 'PN hello' });\n\nexport default defineLogicFunction({\n  universalIdentifier: '${u()}',\n  name: 'pn-hello-route',\n  description: 'PN scratch route',\n  timeoutSeconds: 10,\n  handler,\n  httpRouteTriggerSettings: { path: '/pn-hello', httpMethod: 'GET', isAuthRequired: false },\n});\n`);\n\nwrite('src/logic-functions/pn-echo-tool.ts', `import { defineLogicFunction } from 'twenty-sdk/define';\n\nconst handler = async (params: { text: string }): Promise<{ echoed: string }> => ({ echoed: params.text });\n\nexport default defineLogicFunction({\n  universalIdentifier: '${u()}',\n  name: 'pn-echo-tool',\n  description: 'PN scratch tool: echoes the given text back',\n  timeoutSeconds: 10,\n  handler,\n  toolTriggerSettings: {\n    inputSchema: {\n      type: 'object',\n      properties: { text: { type: 'string', description: 'Text to echo' } },\n      required: ['text'],\n    },\n  },\n});\n`);\n\nwrite('src/logic-functions/pn-env-probe.ts', `import { defineLogicFunction } from 'twenty-sdk/define';\n\nconst handler = async () => ({\n  hasAppSecret: 'APP_SECRET' in process.env,\n  hasPgUrl: 'PG_DATABASE_URL' in process.env,\n  apiUrl: process.env.TWENTY_API_URL ?? null,\n});\n\nexport default defineLogicFunction({\n  universalIdentifier: '${u()}',\n  name: 'pn-env-probe',\n  description: 'PN scratch probe: reports which env var names exist, never values',\n  timeoutSeconds: 10,\n  handler,\n});\n`);",
+        "cd /Users/bussss/projects/twenty-playground/pn-hello-world && node ../pn-add-entities.mjs && yarn twenty plan && yarn twenty apply",
+        "curl -s -i http://localhost:3000/s/pn-hello",
+        "yarn twenty dev:function:exec -n pn-echo-tool -p '{\"text\":\"hi\"}'",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT l.name, l.\"toolTriggerSettings\" IS NOT NULL AS is_tool, l.\"httpRouteTriggerSettings\" IS NOT NULL AS has_route FROM core.\"logicFunction\" l JOIN core.application a ON a.id = l.\"applicationId\" WHERE a.name = $$PN Hello World$$ ORDER BY 1;'",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT o.\"nameSingular\", a.name FROM core.\"objectMetadata\" o JOIN core.application a ON a.id = o.\"applicationId\" WHERE o.\"nameSingular\" = $$pnCase$$; SELECT f.name, o.\"nameSingular\", a.name FROM core.\"fieldMetadata\" f JOIN core.\"objectMetadata\" o ON o.id = f.\"objectMetadataId\" JOIN core.application a ON a.id = f.\"applicationId\" WHERE f.name = $$pnRiskNote$$;'",
+        "docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT table_name FROM information_schema.tables WHERE table_schema = $$workspace_1wgvd1injqtife6y4rvfbu3h5$$ AND table_name ILIKE $$%pncase%$$; SELECT column_name FROM information_schema.columns WHERE table_schema = $$workspace_1wgvd1injqtife6y4rvfbu3h5$$ AND table_name = $$company$$ AND column_name = $$pnRiskNote$$;'"
+      ],
+      "expected": "plan lists objectMetadata pnCase, fieldMetadata pnRiskNote and three logicFunction creations; apply succeeds; the curl returns HTTP 200 with {\"message\":\"PN hello\"} (single-workspace mode resolves /s/ to the Apple workspace); the exec returns echoed 'hi'; SQL shows pn-echo-tool with is_tool = t, pn-hello-route with has_route = t, pnCase and pnRiskNote owned by 'PN Hello World', a workspace table for pnCase (existing custom objects are named like _pet) and a pnRiskNote column on company. From source, the tool should surface to AI chat and MCP as app_pn_echo_tool (to be verified by the AI/MCP areas).",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Verify the LOCAL logic-function driver is active and unsandboxed (inherits the server environment) without printing any secret",
+      "steps": [
+        "cd /Users/bussss/projects/twenty-playground/pn-hello-world && yarn twenty dev:function:exec -n pn-env-probe -p '{}'   # the function from the previous test returns only booleans about env var NAMES"
+      ],
+      "expected": "Result data shows hasAppSecret: true and hasPgUrl: true (the child process inherits the server environment, local-child-process-runner.service.ts:167-171) and apiUrl http://localhost:3000. A 'Logic function execution is disabled' error would instead mean LOGIC_FUNCTION_TYPE is DISABLED; false values would contradict the source reading.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": false
+    },
+    {
+      "goal": "Optional: authorize the CLI through OAuth as tim@apple.dev and see whether a non-Admin role can plan/sync",
+      "steps": [
+        "cd /Users/bussss/projects/twenty-playground/pn-hello-world && yarn twenty remote:add --url http://localhost:3000 --as pn-oauth",
+        "In the browser tab that opens (http://localhost:3002/authorize?...), sign in as tim@apple.dev and click Authorize.",
+        "yarn twenty remote:status && yarn twenty plan",
+        "yarn twenty remote:use pn-local   # switch back to the API-key remote"
+      ],
+      "expected": "'✓ Remote \"pn-oauth\" added (http://localhost:3000) via OAuth.'; remote:status shows 'oauth (valid)'; plan succeeds if tim's Object-restricted role (canUpdateAllSettings = true) is sufficient for the OAuth token, which source reading did not settle.",
+      "needsLlmKey": false,
+      "needsBrowser": true,
+      "mutatesData": true
+    },
+    {
+      "goal": "Uninstall and clean up; confirm what uninstall removes and what it leaves behind",
+      "steps": [
+        "cd /Users/bussss/projects/twenty-playground/pn-hello-world && yarn twenty app:uninstall --yes",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT a.name FROM core.application a WHERE a.\"workspaceId\" = $$20202020-1c25-4d02-bf25-6aeccf7ea419$$ ORDER BY 1; SELECT r.name, r.\"sourceType\" FROM core.\"applicationRegistration\" r ORDER BY 1;'",
+        "docker exec twenty_pg psql -U postgres -d default -At -c 'SELECT table_name FROM information_schema.tables WHERE table_schema = $$workspace_1wgvd1injqtife6y4rvfbu3h5$$ AND table_name ILIKE $$%pncase%$$; SELECT column_name FROM information_schema.columns WHERE table_schema = $$workspace_1wgvd1injqtife6y4rvfbu3h5$$ AND table_name = $$company$$ AND column_name = $$pnRiskNote$$;'",
+        "KEY=$(cat /Users/bussss/projects/twenty-playground/.pn-twenty-api-key); curl -s -X POST http://localhost:3000/metadata -H \"Authorization: Bearer $KEY\" -H 'Content-Type: application/json' -d '{\"query\":\"{ findManyApplicationRegistrations { id name universalIdentifier } }\"}'",
+        "curl -s -X POST http://localhost:3000/metadata -H \"Authorization: Bearer $KEY\" -H 'Content-Type: application/json' -d '{\"query\":\"mutation { deleteApplicationRegistration(id: \\\"<id of the PN Hello World registration from the previous step>\\\") }\"}'",
+        "yarn twenty remote:remove pn-local; cd /Users/bussss/projects/twenty-playground && rm -rf pn-hello-world pn-add-entities.mjs"
+      ],
+      "expected": "After uninstall the 'PN Hello World' row is gone from core.application and the pnCase table and company.pnRiskNote column no longer exist, but the 'PN Hello World' registration row is still present until deleteApplicationRegistration returns true; afterwards only the two 'Custom' registrations and 'Twenty CLI' remain.",
+      "needsLlmKey": false,
+      "needsBrowser": false,
+      "mutatesData": true
+    },
+    {
+      "goal": "Revoke the scratch API key (cannot be done with the API key itself)",
+      "steps": [
+        "Open http://localhost:3002/settings/mcp-apis signed in as tim@apple.dev, open the key named 'PN cli key' and revoke/delete it (the revokeApiKey mutation only accepts a user session, api-key.resolver.ts:151-170).",
+        "rm -f /Users/bussss/projects/twenty-playground/.pn-twenty-api-key",
+        "docker exec twenty_pg psql -U postgres -d default -At -F ' | ' -c 'SELECT name, \"revokedAt\" IS NOT NULL AS revoked FROM core.\"apiKey\" ORDER BY 1;'"
+      ],
+      "expected": "The SQL shows 'PN cli key' as revoked (or absent) and the seeded 'My api key' unchanged; requests with the old token return an authentication error.",
+      "needsLlmKey": false,
+      "needsBrowser": true,
+      "mutatesData": true
+    }
+  ]
+}
