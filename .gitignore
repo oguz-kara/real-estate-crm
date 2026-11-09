@@ -72,3 +72,4 @@ screenshots/
 /.narrow*.mjs
 .superpowers/
 .preview-deploy/
+apps/emlak-app/data/

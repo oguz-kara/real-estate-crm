@@ -12,10 +12,14 @@ const API_KEY_FILE = '/home/user/.re-api-key';
 const main = async () => {
   const args = process.argv.slice(2);
   const dryRun = args.includes('--dry-run');
-  const inputFile = args.find((arg) => !arg.startsWith('--'));
+  const inputFile =
+    args.find((arg) => !arg.startsWith('--')) ??
+    process.env.PORTFOLIO_JSON_PATH;
 
   if (inputFile === undefined) {
-    console.error('Usage: yarn import:sahibinden <file.json> [--dry-run]');
+    console.error(
+      'Usage: yarn import:sahibinden <file.json> [--dry-run], or set PORTFOLIO_JSON_PATH',
+    );
     process.exit(1);
   }
 
